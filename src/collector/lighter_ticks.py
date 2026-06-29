@@ -38,7 +38,8 @@ def _normalize_trade(market_id: int, raw: dict) -> dict | None:
         ts    = int(raw.get("timestamp") or raw.get("ts") or raw["time"])
         # 'is_ask' true → maker was seller → aggressor bought, or vice-versa.
         # Lighter's exact convention varies; we just record what we see.
-        side = "sell" if raw.get("is_ask") else "buy"
+        # taker is the aggressor; if maker was on the ask, taker bought
+        side = "buy" if raw.get("is_maker_ask") else "sell"
         return {"m": market_id, "p": price, "s": size, "t": ts, "side": side}
     except (KeyError, TypeError, ValueError) as e:
         logger.warning(f"unparsable trade for market {market_id}: {raw} ({e})")
