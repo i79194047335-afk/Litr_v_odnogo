@@ -1,23 +1,25 @@
 collector:
-  symbols: [ETH-PERP, BTC-PERP]   # уточнить реальные тикеры Lighter
+  # Run `python -m src.collector.list_markets` once to find IDs.
+  # Typically ETH = 0, BTC = 1, but verify.
+  market_ids: [0, 1]
   out_dir: data/ticks
 
 rangebars:
-  # размер бара в ЦЕНОВЫХ шагах инструмента. Эвристика из дневника mrcvokka:
-  # ~30% от среднего размера минутной свечи за сессию. Калибруется на истории.
-  range_ticks:
-    ETH-PERP: 50
-    BTC-PERP: 100
+  # Lighter prices are integers internally; size in PRICE units of the instrument.
+  # mrcvokka heuristic: ~30% of average 1-minute candle range for the session.
+  # Calibrate from collected ticks before backtesting.
+  range_size:
+    0: 0.50   # ETH placeholder
+    1: 5.00   # BTC placeholder
 
 indicators:
   ema_fast: 15
   ema_slow: 20
   keltner: { period: 35, mult_inner: 4, mult_outer: 8 }
-  # альтернатива каналу — стохастик, как у mrcvokka:
   stochastic: { k: 3, d: 2, smooth: 3 }
 
 backtest:
-  fee_maker_bps: 0      # вписать реальные комиссии Lighter
-  fee_taker_bps: 0
+  fee_maker_bps: 0     # confirmed zero on ETH; verify per market
+  fee_taker_bps: 0     # confirmed zero on ETH; verify per market
   slippage_ticks: 1
-  risk_per_trade: 0.005 # 0.5% — как в дневнике
+  risk_per_trade: 0.005
