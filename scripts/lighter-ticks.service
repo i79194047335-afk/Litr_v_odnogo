@@ -1,0 +1,13 @@
+[Unit]
+Description=Lighter tick collector
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/lighter-rangebar-scalper
+ExecStart=/opt/lighter-rangebar-scalper/.venv/bin/python -m src.collector.lighter_ticks
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/lighter-rangebar-scalper/.env
+
+[Install]
+WantedBy=multi-user.target
