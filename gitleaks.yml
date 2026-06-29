@@ -1,0 +1,14 @@
+# Серверный бэкстоп: сканирует пуши/PR на секреты.
+# Для личного репозитория gitleaks-action бесплатен (лицензия нужна только организациям).
+name: gitleaks
+on: [push, pull_request]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # полная история, чтобы видеть все коммиты пуша
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

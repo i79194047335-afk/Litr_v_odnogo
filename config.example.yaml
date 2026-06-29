@@ -1,0 +1,23 @@
+collector:
+  symbols: [ETH-PERP, BTC-PERP]   # уточнить реальные тикеры Lighter
+  out_dir: data/ticks
+
+rangebars:
+  # размер бара в ЦЕНОВЫХ шагах инструмента. Эвристика из дневника mrcvokka:
+  # ~30% от среднего размера минутной свечи за сессию. Калибруется на истории.
+  range_ticks:
+    ETH-PERP: 50
+    BTC-PERP: 100
+
+indicators:
+  ema_fast: 15
+  ema_slow: 20
+  keltner: { period: 35, mult_inner: 4, mult_outer: 8 }
+  # альтернатива каналу — стохастик, как у mrcvokka:
+  stochastic: { k: 3, d: 2, smooth: 3 }
+
+backtest:
+  fee_maker_bps: 0      # вписать реальные комиссии Lighter
+  fee_taker_bps: 0
+  slippage_ticks: 1
+  risk_per_trade: 0.005 # 0.5% — как в дневнике
