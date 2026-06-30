@@ -1,8 +1,19 @@
 collector:
+  # Live WS collector — numeric Lighter market IDs.
   # Run `python -m src.collector.list_markets` once to find IDs.
   # Typically ETH = 0, BTC = 1, but verify.
   market_ids: [0, 1]
   out_dir: data/ticks
+
+backfill:
+  # Historical Lighter trade backfill via 0xArchive.
+  # Run `python -m src.collector.oxarchive_backfill list-markets` first to
+  # confirm symbol names on 0xArchive (Lighter uses ticker symbols, not IDs).
+  symbols: [BTC, ETH, XAU, SOL, HYPE]
+  start_date: "2025-08-01"   # Lighter fills coverage on 0xArchive starts Aug 2025
+  page_limit: 1000           # max per page (1 credit per page)
+  max_pages_per_day: 5000    # safety cap: abort day if more pages (5M trades/day)
+  pause_between_pages_s: 0.1 # ~10 req/s, well under 15 req/s free-tier limit
 
 rangebars:
   # Lighter prices are integers internally; size in PRICE units of the instrument.

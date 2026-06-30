@@ -9,3 +9,5 @@ tenacity>=8.2
 # Official Lighter Python SDK (used by list_markets helper).
 # Collector itself talks to the raw WS — does not need the SDK at runtime.
 git+https://github.com/elliottech/lighter-python.git
+# 0xArchive SDK for historical Lighter trade backfill.
+oxarchive>=1.7.0
