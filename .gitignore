@@ -6,3 +6,5 @@ config.yaml
 data/
 *.log
 .DS_Store
+*.bak
+*.bak.*
