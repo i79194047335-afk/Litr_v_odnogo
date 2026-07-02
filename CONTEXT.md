@@ -1,135 +1,353 @@
-# Контекст проекта Litr_v_odnogo — handoff
+# Litr_v_odnogo — project context / handoff
 
-> Этот файл — для возобновления работы в новом чате. Прочитай его целиком,
-> а не пересказ. Дальше в репозитории смотри `docs/ytc_scalper_skeleton.md`
-> и `docs/kb_mrcvokka_diary.md` — там полные ресёрчи.
+> Read this file end-to-end when resuming work in a new chat. For deeper
+> research see `docs/ytc_scalper_skeleton.md` and `docs/kb_mrcvokka_diary.md`.
 
 ## TL;DR
-Бэктест range-bar скальпинг-стратегии (семейство Lance Beggs / Songer / mrcvokka)
-под Lighter perp DEX. Пользователь — новичок в крипте/трейдинге, осознанно
-идёт по безопасному пути: **сначала сбор тиков → бэктест → пейпер**,
-живой торговли в репо нет и не должно быть до доказанного бэктестом edge.
-Это не финансовая рекомендация — учебно-исследовательский проект.
 
-## Где код
-- Репо: https://github.com/i79194047335-afk/Litr_v_odnogo (публичный)
-- VPS: `vm1744139.vds.as210546.net`, проект в `/root/projects/Litr_v_odnogo`, venv в `.venv/`
-- Workflow: GitHub source of truth → `git pull` на VPS → правки через bash heredoc → commit → push
-- Защита секретов: pre-commit с gitleaks (локально) + GitHub Action gitleaks (бэкстоп)
+Backtest a range-bar scalping strategy (Lance Beggs / YTC Scalper family, as
+applied by the mrcvokka forum diary) on Lighter perp DEX. The user is new to
+crypto/trading and is deliberately taking the safe path: **tick collection →
+backtest → paper trading**. No live-trading code is in scope until backtest
+shows edge. This is a learning/research project, not financial advice.
 
-## Что РАБОТАЕТ (на момент handoff)
-1. **Range-bar builder** (`src/rangebars/builder.py`) — чистая логика, 2 теста проходят
-2. **Lighter trade collector** (`src/collector/lighter_ticks.py`) — крутится 24/7 как systemd-сервис `lighter-ticks.service`
-   - Сырой WS `wss://mainnet.zklighter.elliot.ai/stream`, без авторизации
-   - Подписка на `trade/{market_id}`
-   - JSONL по дням в `data/ticks/trades_{market_id}_{YYYYMMDD}.jsonl`
-   - Формат: `{"m": int, "p": float, "s": float, "t": ms, "side": "buy"|"sell"}`
-   - Side из `is_maker_ask` (taker side = aggressor)
-   - Tenacity-backoff + systemd Restart=always
+## Where the code lives
 
-## Подтверждённые факты о Lighter (выяснили в чате)
-- **SDK** на pypi называется `lighter-sdk` (импорт `import lighter`). Ставится из git: `pip install git+https://github.com/elliottech/lighter-python.git`
-- **WS**: `wss://mainnet.zklighter.elliot.ai/stream`, ping/pong через `{"type":"pong"}`, требует фрейм каждые 2 минуты
-- **Публичные WS-каналы** (без auth): `order_book`, `trade`, `ticker`, `market_stats`, `spot_market_stats`
-- **Встроенный `lighter.WsClient` поддерживает только** `order_book` и `account_all` — для трейдов нужен raw WS (что мы и делаем)
-- **Market IDs**: ETH = 0, BTC = 1, ZK = 56 (всего ~150+ маркетов; используй `python -m src.collector.list_markets`)
-- **Комиссии**: maker = taker = **0.0000** на ETH и BTC perp (проверено). Это меняет картину — скальп тут жизнеспособнее, чем на CEX
-- **Поля trade-сообщения** (фактический пример, не из доков):
-  ```
-  trade_id, market_id (int), size (str), price (str), usd_amount (str),
-  is_maker_ask (bool), timestamp (ms), block_height, ask/bid_account_id, ...
-  ```
-- **Размеры/точность**: ETH supported_size_decimals=4, supported_price_decimals=2, min_base_amount=0.005
-  BTC supported_size_decimals=5, supported_price_decimals=1, min_base_amount=0.0002
-- **Архитектура**: Lighter технически на Arbitrum (zkL2), почти анонимно (ZK), per-account чужие сделки не отследить
-- **Колокация для low-latency live**: AWS Tokyo `ap-northeast-1a` (это для live-этапа, не сейчас)
-- **Историческая дата** на Lighter доступна на Tardis.dev с 2026-04-17 (платный с бесплатными samples первого числа месяца) — это резервный вариант, если не хотим ждать накопления
+- Repo: https://github.com/i79194047335-afk/Litr_v_odnogo (public)
+- VPS: `vm1744139.vds.as210546.net`, project in `/root/projects/Litr_v_odnogo`,
+  venv in `.venv/`
+- Workflow: GitHub is source of truth → `git pull` on VPS → edits via bash
+  heredoc → commit → push
+- Secret protection: pre-commit gitleaks locally + GitHub Action gitleaks as
+  a backstop
 
-## Стратегическое ядро (что бэктестим)
-Полный разбор в `docs/ytc_scalper_skeleton.md`. Сжато:
-- **Источник**: Lance Beggs «YTC Scalper» + дневник mrcvokka на binguru.net (полный разбор в `docs/kb_mrcvokka_diary.md`, все 19 страниц прочитаны)
-- **Подмножество, которое кодируется** (механический скелет):
-  - HTF=5m, TF=1m, scalping chart = 1-range bars (строим сами из тиков)
-  - Bias: EMA(15)/EMA(20) кросс на 1m (грубый прокси дискреционного определения тренда у Беггса)
-  - Канал Кельтнера: Keltner(35, 4) + Keltner(35, 8) на range-барах
-  - Wholesale/retail zones между линиями 0 / ¼ / ½ / ¾ / 1
-  - **Только WF (with-flow) сетапы**, CF отбрасываем (требует чтения ленты)
-  - Вход: лимит на ¼ и ½ линии, стоп за 0, 2 части
-- **Эвристика размера range-bar (от mrcvokka)**: ~30% от средней минутной свечи за сессию, калибруется на истории
-- **Альтернатива каналу** (опционально): стохастик (3,2,3) — использовал mrcvokka
-- **Трал позиции критичен** — у mrcvokka доработка трейлинга дала ×5 к суточному PnL. Моделировать в бэктесте так же тщательно, как вход
-- **Главное предупреждение**: без дискреции (выбор среды, чтения ленты) edge Беггса заметно слабее. Бэктест нужен, чтобы измерить *насколько*
+## What works
 
-## Что НЕ перенесли в бот (умышленно)
-- Дискреционное определение bias (только PA + структура свингов у Беггса)
-- Классификация среды (тренд/волатильно/пила) — а от неё зависит выбор линии входа
-- Counter-flow (CF) сетапы — требуют чтения order flow / ленты
-- Зоны S/R на M5 — рисуются глазами, не свингами
+1. **Range-bar builder** (`src/rangebars/builder.py`) — pure logic, 2 tests pass.
+2. **Lighter live trade collector** (`src/collector/lighter_ticks.py`) — 24/7
+   as `lighter-ticks.service` systemd unit.
+   - Raw WS `wss://mainnet.zklighter.elliot.ai/stream`, no auth.
+   - Subscribes to `trade/{market_id}`.
+   - Writes JSONL per UTC day: `data/ticks/trades_{market_id}_{YYYYMMDD}.jsonl`.
+   - Deduplicated by `trade_id`. `subscribed/trade` snapshot frames are
+     dropped (they're re-delivered via `update/trade` — persisting them
+     caused ~17% duplicate rows in the legacy v1 schema).
+   - Tenacity backoff + systemd `Restart=always`.
+3. **Historical backfill** (`src/collector/oxarchive_backfill.py`) — pulls
+   Lighter trade history from 0xArchive into the same JSONL schema and same
+   directory as the live collector, so downstream code is source-agnostic.
+   - Two commands: `list-markets` (discovery) and `backfill` (per-day
+     download with cursor pagination, idempotent).
+   - Includes a monkey-patch for an oxarchive v1.7.0 bug where
+     `_convert_timestamp()` calls `int()` on composite cursor strings
+     like `'1759276893930_553252220005'` — Python's `int()` treats `_` as a
+     digit separator (PEP 515), producing a garbage number that the API
+     doesn't understand, causing infinite pagination loops.
+   - Guards: stuck-cursor detection and `max_pages_per_day` cap, both
+     discard the day's `.part` file rather than persist partial data.
+4. **Cross-check tool** (`src/collector/compare_sources.py`) — compares two
+   JSONL files (one live, one backfill) for the same market and UTC day.
+   Prints volumes, side distributions, matched/only-in counts and a
+   plain-language verdict for the A/B → buy/sell mapping and overall
+   overlap. No network access, just file diffing.
 
-## План работ
+### JSONL schema
+
+The collector emits schema **v2**; older files on disk are schema v1.
+Downstream loaders must accept both.
+
+- **v1 (legacy, pre-dedup fix):**
+  `{"m": int, "p": float, "s": float, "t": ms, "side": "buy"|"sell"}`
+- **v2 (current):**
+  `{"m": int, "p": float, "s": float, "t": ms, "side": "buy"|"sell", "tid": int}`
+
+`side` is derived from `is_maker_ask` (taker side = aggressor). `tid` is
+Lighter's unique trade_id — the anchor for both dedup and cross-source
+matching.
+
+## Confirmed Lighter facts
+
+- **SDK on PyPI**: `lighter-sdk` (imported as `import lighter`). Install
+  from git: `pip install git+https://github.com/elliottech/lighter-python.git`.
+- **WS**: `wss://mainnet.zklighter.elliot.ai/stream`, `pong` reply as
+  `{"type":"pong"}`, requires a frame every 2 minutes.
+- **Public WS channels** (no auth): `order_book`, `trade`, `ticker`,
+  `market_stats`, `spot_market_stats`.
+- Built-in `lighter.WsClient` only supports `order_book` and `account_all`
+  — for trades we use raw WS.
+- **Market IDs** (verified): ETH = 0, BTC = 1, SOL = 2, HYPE = 24, XAU = 92.
+  0xArchive reports 221 total Lighter markets.
+- **Fees**: maker = taker = **0.0000** on ETH, BTC, and all top-volume
+  markets we checked. Scalping is more viable here than on CEX.
+- **Trade message fields** (from real captures):
+  `trade_id, market_id, size (str), price (str), usd_amount (str),
+  is_maker_ask (bool), timestamp (ms), block_height, ask/bid_account_id, ...`
+- **Precision**: ETH size_decimals=4, price_decimals=2, min_base=0.005.
+  BTC size_decimals=5, price_decimals=1, min_base=0.0002.
+- Lighter is a **ZK rollup**; matching happens off-chain in the Sequencer,
+  only batched state roots are committed. Individual trades are **not**
+  emitted as on-chain events, so `eth_getLogs` on Arbitrum is a dead end
+  for historical data — confirmed and ruled out.
+- **Colo for low-latency live** (later, not now): AWS Tokyo `ap-northeast-1a`.
+
+## Confirmed 0xArchive facts
+
+- Free tier via **web3 wallet signup**: 50K credits/month, 15 req/s,
+  10 WS subs. (Earlier believed to be 10M credits — that number was wrong;
+  the real free tier is 50K.)
+- Trades cost 1 credit per 1000 rows.
+- **Lighter coverage nominally starts Aug 2025**, but empty for all
+  markets we probed until **2025-10-01**. XAU has no fills until
+  **2025-10-20**. Use per-symbol `start_date` in config, not a common one.
+- Trade object has `side: Literal['A', 'B']`, but on Lighter data this
+  field is **effectively constant `'B'`** — not usable as a side signal.
+- `crossed: bool` **does vary** across trades and is the current best
+  candidate for the side signal in historical data. Verification is
+  pending (see Open Questions).
+- Cursor format is `{timestamp_ms}_{trade_id}`, which triggers the
+  PEP 515 bug in the SDK. Our monkey-patch handles this.
+
+## Cross-check result — 2026-07-01 BTC
+
+Ran `compare_sources` on the first full UTC day where the live collector
+had `tid` support. Findings:
+
+- **Volume**: live = 591,873 trades, backfill = 369,079 (backfill is 37.6%
+  lower). But live had ~17.5% duplicate rows (from `subscribed/trade`
+  snapshots and possible in-batch repeats), so deduplicated live is close
+  to backfill. **Interpretation: 0xArchive is complete, live was inflated
+  by dupes**.
+- **Side**: live 49.7% buy / 50.3% sell — plausible. Backfill 100% sell
+  — confirms `Trade.side` from 0xArchive is unusable for Lighter.
+- **After dedup fix in live**: measured 0.0% dupes over 1.5 h on July 2.
+  New collector output is clean.
+
+## Data on disk
+
+`data/ticks/` currently holds 102 files, ~1.8 GB, ~26M trades across five
+markets. Coverage:
+
+| m_id | Symbol | Days | Range                    | Source        | Schema |
+|------|--------|------|--------------------------|---------------|--------|
+| 0    | ETH    | 3    | 2025-10-01 → 10-03       | backfill      | v2     |
+| 0    | ETH    | 2+   | 2026-06-29 → today       | live (mixed*) | v2     |
+| 1    | BTC    | 3    | 2025-10-01 → 10-03       | backfill      | v2     |
+| 1    | BTC    | 2+   | 2026-06-29 → today       | live (mixed*) | v2     |
+| 2    | SOL    | 31   | 2025-10-01 → 10-31       | backfill      | v2     |
+| 24   | HYPE   | 31   | 2025-10-01 → 10-31       | backfill      | v2     |
+| 92   | XAU    | 30   | 2025-10-20 → 2025-11-18  | backfill      | v2     |
+
+*"mixed" = the file was first written by an earlier backfill run and then
+appended to by the live collector. Not clean for cross-check purposes.
+Only the first UTC day where live wrote from `00:00:00.x` matters —
+verified for 2026-07-01 BTC.
+
+**Duplicate rates in legacy v1 data** (pre-fix): ETH 21.7%, BTC 16.7%.
+After the fix, new data is 0.0%. All pre-July-2 data therefore needs a
+one-time dedup pass (see Open Questions).
+
+## Strategic core (what we backtest)
+
+See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
+
+- **Source**: Lance Beggs "YTC Scalper" + mrcvokka's binguru.net diary
+  (all 19 pages in `docs/kb_mrcvokka_diary.md`).
+- **Mechanized subset**:
+  - HTF = 5m, TF = 1m, scalping chart = 1-range bars (built from ticks).
+  - Bias: EMA(15)/EMA(20) cross on 1m — rough proxy for Beggs' discretionary
+    trend read.
+  - Keltner channel: Keltner(35, 4) + Keltner(35, 8) on range bars.
+  - Wholesale/retail zones between 0 / ¼ / ½ / ¾ / 1 lines.
+  - **WF (with-flow) setups only.** CF setups (require order-flow reading)
+    are excluded.
+  - Entry: limit orders at ¼ and ½ lines, stop past 0, two parts.
+- **Range-bar size heuristic** (mrcvokka): ~30% of average 1m candle range
+  for the session. Calibrated from collected ticks before backtesting.
+- **Trailing is critical**: mrcvokka's diary reports trailing improvements
+  gave ×5 to daily PnL. Model it as carefully as entry.
+- **Honest expectation**: without discretion (environment classification,
+  order-flow reading), Beggs' edge is materially weaker. The backtest
+  measures *how much* weaker.
+
+## What we deliberately did NOT port to the bot
+
+- Discretionary bias call (Beggs uses PA + swing structure).
+- Environment classification (trend/volatile/chop) — and it drives which
+  line to enter on.
+- Counter-flow (CF) setups — require reading order flow / tape.
+- 5m S/R zones — drawn by eye, not from swings.
+
+## Work plan
+
 1. ✅ Range-bar builder + tests
-2. ✅ Lighter trade collector + systemd
-3. **Сбор данных** (идёт сейчас, накапливается в data/ticks/)
-4. **Опционально**: Tardis.dev интеграция для исторических данных
-5. **Индикаторы**: EMA, Keltner (с формулой NT: `centerline = SMA(close, 35); band = centerline ± (mult * SMA(High-Low, 35))`), Stochastic — все с юнит-тестами
-6. **Event-driven бэктестер**:
-   - Загрузка тиков → конструктор range-баров → индикаторы → стратегия
-   - Модель исполнения: лимитки (maker, на Lighter — fee=0), но **fill rate** обязательно моделировать (часть 2 у Беггса часто не исполняется)
-   - Слиппедж в тиках, funding rate для перпов
-7. **Метрики**: экспектанси в R, win-rate, профит-фактор, max DD, fill-rate части 2, walk-forward, sensitivity к параметрам
-8. **Только после положительного бэктеста**: пейпер на живом WS-потоке
-9. **Только после успешного пейпера**: разговор про live (этого пока нет в скоупе)
+2. ✅ Lighter live trade collector + systemd
+3. ✅ Historical backfill (0xArchive) + cross-check tool
+4. ✅ Dedup fix in live collector (schema v2 with `tid`)
+5. ⏳ **Verify `crossed` → side mapping** in 0xArchive using tid-anchored
+   overlap. This unlocks or rules out full historical backfill.
+6. ⏳ **One-time dedup pass** for legacy v1 JSONL files (by `(t,p,s,side)`
+   key since they have no `tid`).
+7. **Indicators**: EMA, Keltner (NT formula:
+   `centerline = SMA(close,35); band = centerline ± mult * SMA(H-L,35)`),
+   Stochastic (3,2,3) — all with unit tests.
+8. **Event-driven backtester**:
+   - Load ticks → build range bars → indicators → strategy.
+   - Execution model: limit orders (maker, fee=0 on Lighter), but **fill
+     rate** must be modeled (Beggs notes part-2 orders often don't fill).
+   - Tick-level slippage, perp funding rate.
+9. **Metrics**: expectancy in R, win-rate, profit factor, max DD, part-2
+   fill rate, walk-forward, parameter sensitivity.
+10. **Only after positive backtest**: paper trading on live WS stream.
+11. **Only after successful paper**: talk about live (not in scope now).
 
-## Антипаттерны — НЕ повторять
-- Bot полностью генерируется ИИ без понимания кода (у mrcvokka так — на коротких работает, на сутках разваливается)
-- AI-агент с auto-execute (Claude Code запускающий код без ревью)
-- Live торговля до прохождения бэктеста и пейпера
-- Заявления типа "+20-162%/день" из дневника как бенчмарк — это ручной режим на макс плече, не воспроизводимо ботом
+## Anti-patterns — do NOT repeat
 
-## Структура репо
+- Bot fully generated by AI without understanding the code (mrcvokka's
+  path: works short-term, falls apart on multi-hour runs).
+- AI agent with auto-execute (e.g. Claude Code running code without review).
+- Live trading before backtest and paper stages pass.
+- Quoting the "+20–162% per day" numbers from the diary as a benchmark —
+  those are manual-mode, max leverage, no public proofs.
+- **Silent config changes by AI agents**: DeepSeek modifying `config.yaml`
+  (dropping symbols, adding fields) during a debug session without
+  flagging it. Config is project memory — don't let it drift silently.
+  Skepticism applies to Claude too.
+- **Accepting AI-suggested code fixes without diagnosis**: the dedup issue
+  was real, but "dedupers can be removed since dropped_dup=0" (a
+  suggestion made in a partial-day sample) would have been the wrong
+  conclusion. Always look at the underlying data before removing safety.
+
+## Session log (2026-07-02)
+
+Key events from the current chat, most recent first:
+
+- **Dedup fix landed.** New `lighter_ticks.py` (schema v2 with `tid`,
+  `Deduper` class with 50K-per-market FIFO, `subscribed/trade` frames
+  dropped, `is not None` checks, missing `is_maker_ask` → drop with
+  warning, JSON/YAML error handling, periodic stats logging).
+  `tests/test_collector.py` covers `_normalize_trade` edge cases and
+  `Deduper` semantics (14 tests). Verified: 0.0% dupes on new data,
+  vs 17-22% on legacy files.
+- **Cross-check tool written.** `compare_sources.py` — reads two JSONL
+  files, prints volume/side/overlap stats and a plain-language verdict.
+- **Backfill script written.** `oxarchive_backfill.py` — `list-markets` +
+  `backfill` commands, atomic per-day writes, idempotent. Includes SDK
+  cursor bugfix (`_patch_cursor_handling`) and guards.
+- **oxarchive SDK bug found.** `_convert_timestamp()` mangles composite
+  cursor strings via `int()` on PEP-515 underscore digits, causing
+  infinite pagination. Diagnosed by DeepSeek, monkey-patched in our code.
+  Reported? No — a fix upstream would remove the need for the patch.
+- **0xArchive setup done.** Wallet signup, key in `.env`, ~26M trades
+  backfilled across 5 markets for October 2025 (partial). BTC/ETH full
+  month not backfilled due to disk/credit budget.
+- **Cross-check on 2026-07-01 BTC** produced the diagnosis that (a)
+  0xArchive `side` field is useless (100% 'B'), (b) live collector had
+  ~37% inflation from dupes, not that backfill was missing data.
+
+## Open questions
+
+1. **`crossed` → side mapping**. Does `crossed=True` in 0xArchive
+   correspond to `is_maker_ask=True` (buy) or `is_maker_ask=False`
+   (sell)? Now that live JSONL has `tid`, we can join on `tid` and check
+   directly. If the mapping is stable, we unlock 9 months of history
+   with a corrected backfill. If not, we live on the growing live dataset.
+2. **Retro-dedup of legacy v1 files**. Older JSONL has no `tid`, so
+   dedup falls back to `(t, p, s, side)`. Less precise (may collapse
+   distinct trades with identical price/size at the same ms) but still
+   removes ~17-22% of false volume. One-time script, run in place with
+   a `.bak` alongside.
+3. **Ret-dedup or fresh re-backfill?** For files backfilled from
+   0xArchive we could also just re-download with the fixed cursor handling
+   — cleaner, but costs credits. Decide after (1).
+4. **Cosmetic**: `RuntimeError: Event loop stopped before Future completed`
+   at systemd stop. Not a data loss, just noisy in logs. Not fixed yet.
+
+## Repo structure
+
 ```
 src/
-  collector/   lighter_ticks.py    ✅ работает (systemd)
-               list_markets.py     ✅ работает
-  rangebars/   builder.py          ✅ + tests
-  indicators/  (пусто, следующий шаг)
-  backtest/    (пусто, следующий шаг)
-data/ticks/    JSONL накапливается
+  collector/   lighter_ticks.py        ✅ v2 schema, dedup by tid, snapshot skip
+               list_markets.py         ✅ helper
+               oxarchive_backfill.py   ✅ historical backfill + SDK bugfix
+               compare_sources.py      ✅ cross-source cross-check
+  rangebars/   builder.py              ✅ + tests
+  indicators/  (empty, next step)
+  backtest/    (empty, next step)
+data/ticks/    JSONL, mixed v1 (legacy) and v2 (post-2026-07-02)
 docs/
-  ytc_scalper_skeleton.md          стратегический разбор Беггса
-  kb_mrcvokka_diary.md             полный ресёрч 19 страниц форума
-scripts/lighter-ticks.service      template (реальный unit в /etc/systemd/system/)
-tests/test_rangebars.py            2 теста, проходят
-.pre-commit-config.yaml            gitleaks локально
-.github/workflows/gitleaks.yml     gitleaks серверный
-config.example.yaml                эталон
-config.yaml                        локальный, не в git
+  ytc_scalper_skeleton.md              strategic breakdown of Beggs
+  kb_mrcvokka_diary.md                 full research, 19 pages, forum diary
+scripts/lighter-ticks.service          template (real unit in /etc/systemd/system/)
+tests/
+  test_rangebars.py                    2 tests, passing
+  test_collector.py                    14 tests, passing
+.pre-commit-config.yaml                gitleaks local
+.github/workflows/gitleaks.yml         gitleaks server-side
+config.example.yaml                    reference
+config.yaml                            local, not in git
+CONTEXT.md                             this file
 ```
 
-## Команды-памятка
+## Command memo
+
 ```bash
-# статус сборщика
+# collector status
 sudo systemctl status lighter-ticks --no-pager
 tail -f /var/log/lighter-ticks.log
 wc -l data/ticks/*.jsonl
 
-# рестарт после правок
+# restart after edits
 sudo systemctl restart lighter-ticks
 
-# пуш с правками
+# tests
+source .venv/bin/activate
+python -m pytest tests/ -v
+
+# discovery of Lighter markets on 0xArchive
+python -m src.collector.oxarchive_backfill list-markets
+
+# historical backfill (configured in config.yaml::backfill)
+python -m src.collector.oxarchive_backfill backfill
+
+# cross-check live vs backfill for a specific day
+python -m src.collector.compare_sources \
+    --live data/ticks/trades_1_20260701.jsonl \
+    --backfill data/ticks_backfill/trades_1_20260701.jsonl
+
+# quick dupe check on any JSONL (needs tid — schema v2)
+python3 -c "
+import json
+from collections import Counter
+with open('data/ticks/trades_1_20260702.jsonl') as f:
+    tids = [json.loads(l)['tid'] for l in f]
+c = Counter(tids)
+dupes = sum(v-1 for v in c.values() if v > 1)
+print(f'rows={len(tids)} unique={len(c)} dupes={dupes} ({100*dupes/len(tids):.3f}%)')
+"
+
+# push workflow
 git add -A && git commit -m "..." && git push
 ```
 
-## Профиль пользователя (важно учитывать)
-- Новичок в крипте и трейдинге — начинал в этом проекте с нуля
-- Понимает базу: wallets, stablecoins, DEX/CEX, leverage, TVL/APR/maker/taker, gas, RPC
-- Программирование: не пишет код сам, ведёт работу через bash на VPS (создаёт файлы heredoc'ами), не использует IDE
-- Принимает предупреждения о рисках, но иногда переоценивает темп — в новом чате стоит **держать порядок «бэктест → пейпер → live»** жёстко
-- Предпочитает английский язык в общении (раньше был русский — переключился в середине этого чата)
-- Тон: прямой, конструктивный, краткий; без сюсюканья; честно говорить о трейдоффах и о том, что я (Claude) могу и не могу
+## User profile (important to keep in mind)
 
-## Что я (Claude) НЕ могу
-- Доступа к VPS у меня нет — все команды через пользователя
-- Доступа к git-репо как «живому» источнику тоже нет — пользователь приносит срез
-- Не могу создать репо на чужом GitHub за пользователя
-- Долгосрочной памяти между чатами нет, поэтому существует этот файл
+- New to crypto and trading — started this project from scratch.
+- Understands basics: wallets, stablecoins, DEX/CEX, leverage, TVL/APR,
+  maker/taker, gas, RPC.
+- Programming: does not write code themselves. Works via bash heredocs on
+  the VPS (no IDE).
+- Accepts risk warnings, but sometimes overestimates pace — new chats
+  should hold the **backtest → paper → live** order firmly.
+- Prefers **English** communication.
+- Tone: direct, constructive, concise. No hand-holding. Be honest about
+  trade-offs and about what Claude can and can't do.
+- Uses multiple AI assistants in parallel (Claude + DeepSeek). Expects
+  Claude to review and reason about work done by others rather than
+  rubber-stamp it — and vice versa.
+
+## What Claude CANNOT do
+
+- No VPS access — all commands go through the user.
+- No live GitHub repo access — the user brings a snapshot.
+- Cannot create the GitHub repo under the user's account.
+- No long-term memory across chats, hence this file.
