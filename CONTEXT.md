@@ -27,7 +27,8 @@ shows edge. This is a learning/research project, not financial advice.
 2. **Lighter live trade collector** (`src/collector/lighter_ticks.py`) — 24/7
    as `lighter-ticks.service` systemd unit.
    - Raw WS `wss://mainnet.zklighter.elliot.ai/stream`, no auth.
-   - Subscribes to `trade/{market_id}`.
+   - Subscribes to `trade/{market_id}` for all 5 markets: ETH(0), BTC(1),
+     SOL(2), HYPE(24), XAU(92) — expanded from ETH/BTC-only on 2026-07-03.
    - Writes JSONL per UTC day: `data/ticks/trades_{market_id}_{YYYYMMDD}.jsonl`.
    - Deduplicated by `trade_id`. `subscribed/trade` snapshot frames are
      dropped (they're re-delivered via `update/trade` — persisting them
@@ -101,9 +102,17 @@ matching.
   **2025-10-20**. Use per-symbol `start_date` in config, not a common one.
 - Trade object has `side: Literal['A', 'B']`, but on Lighter data this
   field is **effectively constant `'B'`** — not usable as a side signal.
-- `crossed: bool` **does vary** across trades and is the current best
-  candidate for the side signal in historical data. Verification is
-  pending (see Open Questions).
+- `crossed: bool` **verified as the side signal** (2026-07-02: 17,788
+  trades joined by `tid` against live `is_maker_ask`, 100.00% agreement).
+  Mapping: `crossed=True → buy`, `crossed=False → sell`.
+- **0xArchive systematically undercounts, and the loss is bursty, not
+  random.** Same-hour gap-distribution check: live had 5,441 adjacent-`tid`
+  pairs (`gap=1`, back-to-back trades), backfill had 10. Missing tids form
+  runs of consecutive integers. Worst possible loss pattern for a
+  range-bar strategy — it distorts bar closings and undercounts volume
+  exactly during bursts. **October 2025 backfill data is downgraded to
+  reference-only** — not used for range-bar calibration or fill-rate
+  estimation.
 - Cursor format is `{timestamp_ms}_{trade_id}`, which triggers the
   PEP 515 bug in the SDK. Our monkey-patch handles this.
 
@@ -113,12 +122,15 @@ Ran `compare_sources` on the first full UTC day where the live collector
 had `tid` support. Findings:
 
 - **Volume**: live = 591,873 trades, backfill = 369,079 (backfill is 37.6%
-  lower). But live had ~17.5% duplicate rows (from `subscribed/trade`
-  snapshots and possible in-batch repeats), so deduplicated live is close
-  to backfill. **Interpretation: 0xArchive is complete, live was inflated
-  by dupes**.
+  lower).
 - **Side**: live 49.7% buy / 50.3% sell — plausible. Backfill 100% sell
   — confirms `Trade.side` from 0xArchive is unusable for Lighter.
+- **Initial interpretation was wrong.** First read: "0xArchive is complete,
+  live was inflated by ~17.5% dupes." Corrected 2026-07-02 by the
+  gap-distribution diagnostic above — 0xArchive is the one dropping data
+  (bursts specifically), not live over-counting. Both sources had real,
+  separate problems: live had dupes (fixed below), 0xArchive undercounts
+  bursts (not fixable on our end — hence reference-only).
 - **After dedup fix in live**: measured 0.0% dupes over 1.5 h on July 2.
   New collector output is clean.
 
@@ -145,6 +157,12 @@ verified for 2026-07-01 BTC.
 **Duplicate rates in legacy v1 data** (pre-fix): ETH 21.7%, BTC 16.7%.
 After the fix, new data is 0.0%. All pre-July-2 data therefore needs a
 one-time dedup pass (see Open Questions).
+
+**Status: the October 2025 backfill rows in this table are reference-only**
+(see the undercount finding in "Confirmed 0xArchive facts"). Calibration
+and backtesting will use live-collected data exclusively, going forward.
+Live coverage expanded to all 5 markets on 2026-07-03 (previously
+ETH/BTC only) — SOL/HYPE/XAU now accumulating live data too.
 
 ## Strategic core (what we backtest)
 
@@ -183,8 +201,12 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
 2. ✅ Lighter live trade collector + systemd
 3. ✅ Historical backfill (0xArchive) + cross-check tool
 4. ✅ Dedup fix in live collector (schema v2 with `tid`)
-5. ⏳ **Verify `crossed` → side mapping** in 0xArchive using tid-anchored
-   overlap. This unlocks or rules out full historical backfill.
+5. ✅ **Verified `crossed` → side mapping** in 0xArchive using tid-anchored
+   overlap (100.00% agreement, 17,788 trades). Result: mapping confirmed,
+   but 0xArchive also undercounts bursts by ~24–37% — so this *rules out*
+   full historical backfill rather than unlocking it. Backfill data stays
+   reference-only; live collector is now the sole source for calibration
+   and backtesting.
 6. ⏳ **One-time dedup pass** for legacy v1 JSONL files (by `(t,p,s,side)`
    key since they have no `tid`).
 7. **Indicators**: EMA, Keltner (NT formula:
@@ -240,25 +262,39 @@ Key events from the current chat, most recent first:
 - **0xArchive setup done.** Wallet signup, key in `.env`, ~26M trades
   backfilled across 5 markets for October 2025 (partial). BTC/ETH full
   month not backfilled due to disk/credit budget.
-- **Cross-check on 2026-07-01 BTC** produced the diagnosis that (a)
-  0xArchive `side` field is useless (100% 'B'), (b) live collector had
-  ~37% inflation from dupes, not that backfill was missing data.
+- **Cross-check on 2026-07-01 BTC** produced an initial (later corrected)
+  diagnosis that (a) 0xArchive `side` field is useless (100% 'B'), (b)
+  live collector had ~37% inflation from dupes.
+- **`crossed` mapping verified** (2026-07-02, 10:00–11:00 UTC BTC,
+  17,788 tid-joined trades): `crossed=True → buy`, 100.00% agreement.
+- **Undercount finding** (same session): gap-distribution check showed
+  0xArchive drops trades in bursts (5,441 live `gap=1` adjacencies vs. 10
+  in backfill for the same hour) — corrects the July 1 interpretation.
+  Live was not inflated relative to a complete backfill; 0xArchive was
+  incomplete. October 2025 backfill downgraded to reference-only.
+
+## Session log (2026-07-03)
+
+- **`collector.market_ids` expanded from `[0, 1]` to `[0, 1, 2, 24, 92]`.**
+  Live collector had been writing ETH/BTC only since 2026-06-29; given the
+  live-only calibration decision above, SOL/HYPE/XAU needed live coverage
+  too. Collector restarted, all 5 subscriptions confirmed.
 
 ## Open questions
 
-1. **`crossed` → side mapping**. Does `crossed=True` in 0xArchive
-   correspond to `is_maker_ask=True` (buy) or `is_maker_ask=False`
-   (sell)? Now that live JSONL has `tid`, we can join on `tid` and check
-   directly. If the mapping is stable, we unlock 9 months of history
-   with a corrected backfill. If not, we live on the growing live dataset.
+1. ~~`crossed` → side mapping~~ — **resolved 2026-07-02**, see "Confirmed
+   0xArchive facts". Mapping confirmed, but the undercount finding means
+   we don't act on the "unlock 9 months of history" branch — backfill
+   stays reference-only regardless of a correct side mapping.
 2. **Retro-dedup of legacy v1 files**. Older JSONL has no `tid`, so
    dedup falls back to `(t, p, s, side)`. Less precise (may collapse
    distinct trades with identical price/size at the same ms) but still
    removes ~17-22% of false volume. One-time script, run in place with
-   a `.bak` alongside.
-3. **Ret-dedup or fresh re-backfill?** For files backfilled from
-   0xArchive we could also just re-download with the fixed cursor handling
-   — cleaner, but costs credits. Decide after (1).
+   a `.bak` alongside. Low priority — only a few days of pre-fix data.
+3. ~~Retro-dedup or fresh re-backfill?~~ — **moot**. Re-downloading from
+   0xArchive with the fixed cursor handling would still hit the same
+   burst-undercount ceiling; it's a source limitation, not a pagination
+   bug. No further 0xArchive downloads planned.
 4. **Cosmetic**: `RuntimeError: Event loop stopped before Future completed`
    at systemd stop. Not a data loss, just noisy in logs. Not fixed yet.
 
