@@ -209,14 +209,57 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
    and backtesting.
 6. ⏳ **One-time dedup pass** for legacy v1 JSONL files (by `(t,p,s,side)`
    key since they have no `tid`).
-7. **Indicators**: EMA, Keltner (NT formula:
-   `centerline = SMA(close,35); band = centerline ± mult * SMA(H-L,35)`),
-   Stochastic (3,2,3) — all with unit tests.
-8. **Event-driven backtester**:
-   - Load ticks → build range bars → indicators → strategy.
-   - Execution model: limit orders (maker, fee=0 on Lighter), but **fill
-     rate** must be modeled (Beggs notes part-2 orders often don't fill).
-   - Tick-level slippage, perp funding rate.
+7. ✅ **Indicators + range-bar calibration done**:
+   - EMA (streaming, seeded from first price), Keltner (shared core
+     computes SMA(close) and SMA(H-L) once, both mult=4 and mult=8 read
+     off it — cannot desync), Stochastic 3/2/3 (slow: k=3, slowing=2,
+     d=3). 34 tests against hand-computed values.
+   - Range-bar calibration (`src/rangebars/calibrate.py`): mrcvokka's
+     30%-of-mean-1m-range heuristic, pooled per market over collected
+     live days. Reports mean-all, mean-nonzero, zero-minute fraction —
+     surfaces the illiquid-market ambiguity rather than hiding it.
+   - BTC calibrated on 4 live days (June 29 – July 2): **range_size = 15.3**
+     (153 ticks at tick size 0.1). October 2025 backfill vs current-week
+     live gave 18.0 vs 15.3 — 17% swing driven by a genuine volatility
+     regime difference (October was more volatile), NOT by backfill
+     undercount as first predicted. range_size is regime-dependent, not
+     a constant. Written to `config.yaml::rangebars.range_size` with a
+     comment to that effect.
+   - ETH/SOL/HYPE/XAU calibration pending: need clean live days first
+     (SOL/HYPE/XAU only started live 2026-07-03).
+8. ⏳ **Event-driven backtester** (in progress, slices 1–3 of 5 done):
+   - ✅ Slice 1 — replay harness (`src/backtest/replay.py`): one pass
+     over ticks builds range bars and 1m candles in parallel, with a hard
+     lookahead guarantee (a bar-close handler never sees a 1m candle that
+     ended after that bar). The 1m candle for minute M only closes when
+     the first tick of a later minute arrives — the next trade is the
+     clock; a live process on the same WS stream would know exactly the
+     same amount. 12 tests, two of them dedicated to pinning event order.
+   - ✅ Slice 2 — fill engine (`src/backtest/orders.py`): limit orders
+     fill "through, not touch" at the limit price (queue ambiguity → we
+     under-fill rather than over-fill); stop orders "touch, trigger" at
+     the TICK price (gap slippage is not softened). Asymmetry is
+     deliberate — pessimistic on both entries and stops. Fill-probability
+     haircut deferred to Slice 4 as a visible config knob, not baked in.
+     14 tests.
+   - ✅ Slice 3 — WF strategy (`src/backtest/strategy.py`): two-condition
+     bias with a neutral zone (EMA cross AND close past fast; both EMAs
+     must be past warm-up), zone lines off the shared Keltner core
+     (mults 4 and 8 give evenly-spaced 0/¼/½/¾/1 automatically), two-part
+     limit entries at ½ and ¼, static stop AT the 0-line (frozen at first
+     fill), take-profit at ¾, reversal-bar exit for whatever remains.
+     Per-bar order refresh only while flat. Resting-order guard: an
+     entry limit on the wrong side of last tick is skipped, not placed.
+     13 tests, three fully hand-scripted end-to-end scenarios (take, gap
+     stop, reversal). One of them caught a real bug — see Anti-patterns.
+   - ⏳ Slice 4 (next) — costs (fee_bps, slippage_ticks, funding rate),
+     fill-probability haircut, and trailing measured as a separate
+     experiment against the base system so the diary's ×5 claim earns
+     its own row rather than being silently included.
+   - ⏳ Slice 5 — metrics runner: feed real JSONL through the whole
+     stack, output expectancy in R, win rate, profit factor, max DD,
+     part-2 fill rate. This is the actual "does the mechanical subset
+     have edge on Lighter" answer.
 9. **Metrics**: expectancy in R, win-rate, profit factor, max DD, part-2
    fill rate, walk-forward, parameter sensitivity.
 10. **Only after positive backtest**: paper trading on live WS stream.
@@ -238,6 +281,18 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
   was real, but "dedupers can be removed since dropped_dup=0" (a
   suggestion made in a partial-day sample) would have been the wrong
   conclusion. Always look at the underlying data before removing safety.
+- **Tests that verify the code against itself.** Every meaningful test in
+  this repo uses expected values derived by hand, on paper, from the
+  rules — not read back from what the implementation produces. Concrete
+  payoff (Slice 3, gap scenario, 2026-07-03): a hand-scripted test
+  predicted "book must be empty after a gap stop-out" and the code
+  disagreed — turned out an entry fill on the same tick had superseded
+  the tracked stop with a resized replacement, but the strategy cleared
+  its stop tracker unconditionally when the OLD stop's fill came
+  through, leaving a phantom size-2 stop on the book. Exactly the class
+  of bug that only shows up on multi-hour runs. Same principle as the
+  dedup lesson above: don't clear safety trackers without checking
+  which specific instance you're clearing.
 
 ## Session log (2026-07-02)
 
@@ -279,6 +334,38 @@ Key events from the current chat, most recent first:
   Live collector had been writing ETH/BTC only since 2026-06-29; given the
   live-only calibration decision above, SOL/HYPE/XAU needed live coverage
   too. Collector restarted, all 5 subscriptions confirmed.
+- **Auth workflow permanently fixed.** Multiple previous push attempts had
+  been failing with `vscode-git-*.sock: ECONNREFUSED`. Root cause: VS Code
+  Remote-SSH injects `GIT_ASKPASS` pointing at a socket owned by the VS
+  Code window, and stale env vars from a dead window overrode
+  `credential.helper` (which is checked AFTER `GIT_ASKPASS` in git's
+  resolution order). `gh auth` re-established; the ghost env vars
+  (`GIT_ASKPASS`, `VSCODE_GIT_*`, `VSCODE_GIT_IPC_HANDLE`) are now unset
+  from `~/.bashrc` on every login shell so this cannot recur silently.
+- **Indicators + tests landed** (task 7). EMA, Keltner (shared core),
+  Stochastic 3/2/3. All streaming/incremental so the eventual backtester
+  can be a single lookahead-free event loop. 34 tests against
+  independently hand-computed values (period=3 or period=2 chosen so the
+  arithmetic is checkable on paper). One late correction landed here: the
+  first pass of the tests used a stub `RangeBar` with defaulted
+  `start_ts`/`end_ts`; the real repo dataclass makes them required
+  positional. Caught by re-verifying against the repo signature before
+  handing the heredoc over.
+- **Range-bar calibration landed.** `calibrate.py` + 10 tests. Pooled BTC
+  live days gave 15.3 (153 ticks). The globbed run (including 3 October
+  backfill days) had come in at 18.0; the 17% gap turned out to be a
+  volatility regime difference, not backfill undercount as I had
+  predicted. Named explicitly — a wrong prediction is worth flagging, not
+  glossing over. BTC written to `config.yaml`; ETH/SOL/HYPE/XAU await
+  more clean live days.
+- **Backtester slices 1–3 landed** (task 8, in progress). Replay harness,
+  fill engine, WF strategy. 39 tests including three hand-scripted
+  end-to-end scenarios (take, gap stop, reversal). The gap scenario
+  caught the orphaned-stop bug described under Anti-patterns.
+- **CONTEXT.md update method.** All CONTEXT.md updates this session used
+  targeted Python find-replace scripts (each edit verified to match
+  exactly once, or fail loudly) rather than full rewrites — makes drift
+  visible instead of silent.
 
 ## Open questions
 
@@ -307,8 +394,14 @@ src/
                oxarchive_backfill.py   ✅ historical backfill + SDK bugfix
                compare_sources.py      ✅ cross-source cross-check
   rangebars/   builder.py              ✅ + tests
-  indicators/  (empty, next step)
-  backtest/    (empty, next step)
+               calibrate.py            ✅ 30% of mean 1m range + tests
+  indicators/  ema.py                  ✅ streaming, seed from first price
+               keltner.py              ✅ shared core, mult 4 & 8
+               stochastic.py           ✅ slow 3/2/3
+  backtest/    replay.py               ✅ slice 1: harness, dual series
+               orders.py               ✅ slice 2: fill engine
+               strategy.py             ✅ slice 3: WF strategy
+                                       ⏳ slice 4 (costs+trailing) next
 data/ticks/    JSONL, mixed v1 (legacy) and v2 (post-2026-07-02)
 docs/
   ytc_scalper_skeleton.md              strategic breakdown of Beggs
@@ -317,6 +410,13 @@ scripts/lighter-ticks.service          template (real unit in /etc/systemd/syste
 tests/
   test_rangebars.py                    2 tests, passing
   test_collector.py                    14 tests, passing
+  test_calibrate.py                    10 tests, passing
+  test_indicators_ema.py               6 tests, passing
+  test_indicators_keltner.py           6 tests, passing
+  test_indicators_stochastic.py        6 tests, passing
+  test_replay.py                       12 tests, passing
+  test_orders.py                       14 tests, passing
+  test_strategy.py                     13 tests, passing
 .pre-commit-config.yaml                gitleaks local
 .github/workflows/gitleaks.yml         gitleaks server-side
 config.example.yaml                    reference
@@ -338,6 +438,13 @@ sudo systemctl restart lighter-ticks
 # tests
 source .venv/bin/activate
 python -m pytest tests/ -v
+
+# range-bar size calibration (pool per market)
+python -m src.rangebars.calibrate --market 1 --data-dir data/ticks --tick 0.1
+# or explicit files (recommended: live-only, no October backfill mixed in):
+python -m src.rangebars.calibrate \
+    --files data/ticks/trades_1_YYYYMMDD.jsonl \
+    --tick 0.1
 
 # discovery of Lighter markets on 0xArchive
 python -m src.collector.oxarchive_backfill list-markets
