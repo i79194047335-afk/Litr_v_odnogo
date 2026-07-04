@@ -3,49 +3,42 @@ Slice 5 of the backtester: metrics.
 
 Aggregates a Trade list (Slice 3) and its CostBreakdown list (Slice 4a) into
 the numbers docs/ytc_scalper_skeleton.md §4.5 / CONTEXT.md work-plan item 9
-actually asked for: expectancy in R, win-rate, profit factor, max drawdown,
-part-2 fill rate.
+asked for: expectancy, win-rate, profit factor, max drawdown, part-2 fill rate.
 
 SIMPLIFICATION, named not hidden: expectancy/win-rate/profit-factor are
 computed PER PART — each Trade record (part1 and part2 are separate entries
-in the list) counts as its own R-bearing outcome, not aggregated per session.
-This is defensible: part1 and part2 have genuinely different entry prices and
-therefore different risk, even though they share one stop and one directional
-bet. But it's a choice, not a law — if these numbers look distorted by the
-split (e.g. a session that filled both parts effectively gets "two trades"
-in the stats), a session-level aggregate (size-weighted R per session) is the
-documented alternative to build if needed.
-
-DRAWDOWN UNIT: cumulative net-R, not currency or %. This project has no
-account-equity concept anywhere yet (no starting balance, no position sizing
-beyond part_size=1 unit) — a dollar or percentage drawdown would need one,
-and picking an arbitrary balance to make the number look like a number would
-be worse than being explicit that it's not modeled. R units are portable and
-consistent with expectancy already being reported in R.
+in the list) counts as its own outcome, not aggregated per session. Part1 and
+part2 have genuinely different entry prices, so this is defensible, but it's a
+choice — a session-level aggregate is the documented alternative if the split
+distorts things.
 
 WHAT'S EXCLUDED, on purpose: a position still open when the tick data ends
 (WFStrategy.has_open_position) is unrealized — never reached _flat_reset, so
 it's in neither self.trades nor the session counters. Same "don't fabricate
-closure" discipline as replay.py's still-open final bar. The runner reports
-this count as a caveat, not as a metric.
+closure" discipline as replay.py's still-open final bar.
 
-CORRECTED 2026-07-04 — session outcomes are three-way, not binary:
-`n_sessions_part1_only`, `n_sessions_part2_only`, `n_sessions_both`. A single
-"part2 fill rate" flag conflated genuine scale-in (both parts filled) with
-part1 simply never filling (see strategy.py's _flat_reset comment — this was
-found on real data: 13 "both" vs 666 "part2 only" out of 2909 sessions, a
-huge difference the old binary metric hid). `part2_fill_rate` below keeps the
-original meaning (any session where part2 ended up filled, regardless of
-part1) for continuity; `scale_in_rate` is the new, unambiguous "both parts
-joined" number — read that one, not part2_fill_rate, if the question is
-"is the two-part entry actually averaging in".
+SESSION OUTCOMES are three-way, not binary: `n_sessions_part1_only`,
+`n_sessions_part2_only`, `n_sessions_both`. A single "part2 fill rate" flag
+conflated genuine scale-in (both filled) with part1 simply never filling
+(found on real data: 13 "both" vs 666 "part2 only" of 2909 sessions).
+`part2_fill_rate` keeps the original meaning (any part2 fill) for continuity;
+`scale_in_rate` is the unambiguous "both parts joined" number.
 
-DISPERSION, added 2026-07-04: stdev and standard error on the R-multiple
-distributions (gross and net), plus a rough t-statistic (expectancy / SE).
-This is a SANITY CHECK, not a rigorous test — it assumes trades are
-independent (questionable; they share overlapping market regimes) and
-roughly normal. Treat |t| < ~2 as "can't rule out this is noise", not as a
-formal hypothesis-test verdict.
+R vs bps — the reason bps is the headline unit: R-multiple divides each
+trade's PnL by |entry - stop|, the distance to the line-0 stop. On real BTC
+data the stop fired 1 time in 2909 — trades exit by reversal-bar far before
+reaching it — so that denominator is almost never the realized risk, and
+every R number is scaled by a risk that didn't happen. bps (basis points of
+entry price, 1 bps = 0.01%) divides by entry price instead, near-constant
+over a short window, so bps expectancy reflects the actual price move
+captured, undistorted. bps is the headline; R is kept because for the rare
+take trades the stop distance genuinely IS the risk, so their R is meaningful
+and comparable to how Beggs would think about them.
+
+DISPERSION: stdev, standard error and a rough t-stat (expectancy/SE) on each
+series. SANITY CHECK, not a formal test — assumes trades are independent
+(questionable; shared market regimes) and roughly normal. |t| < ~2 means
+"can't rule out noise", not a verdict.
 """
 from __future__ import annotations
 
@@ -68,8 +61,7 @@ def _win_rate(values: list[float]) -> float | None:
 
 def _profit_factor(values: list[float]) -> float | None:
     """sum(wins) / abs(sum(losses)). math.inf if there are wins and no
-    losses (a genuinely undefined-but-meaningful case). None if there is
-    nothing to divide (no trades, or every trade exactly breakeven)."""
+    losses (genuinely undefined-but-meaningful). None if nothing to divide."""
     pos = sum(v for v in values if v > 0)
     neg = abs(sum(v for v in values if v < 0))
     if neg == 0:
@@ -78,7 +70,6 @@ def _profit_factor(values: list[float]) -> float | None:
 
 
 def _stdev(values: list[float]) -> float | None:
-    """Sample stdev (ddof=1). None if fewer than 2 values (undefined)."""
     return statistics.stdev(values) if len(values) >= 2 else None
 
 
@@ -88,23 +79,47 @@ def _standard_error(values: list[float]) -> float | None:
 
 
 def _t_stat(expectancy: float | None, se: float | None) -> float | None:
-    """Rough expectancy/SE ratio — a sanity check, not a formal test (see
-    module docstring's caveat on independence/normality assumptions)."""
     if expectancy is None or se is None or se == 0:
         return None
     return expectancy / se
 
 
-def _max_drawdown_r(ordered_net_r: list[float]) -> float | None:
-    """Max peak-to-trough decline on the cumulative net-R curve, in the
-    order given (caller sorts by exit_ts — realization order, not entry
-    order, since drawdown is about equity as it's actually realized)."""
-    if not ordered_net_r:
+def _bps(pnl: float, size: float, entry_price: float) -> float:
+    """Per-trade PnL as basis points of entry price (1 bps = 0.01%).
+
+    THE honest scalping unit — see module docstring's R-vs-bps note. pnl is
+    the TOTAL (size-scaled) amount, so divide by (size * entry_price) for a
+    per-unit fraction, then * 10000 for bps."""
+    denom = size * entry_price
+    return (pnl / denom) * 10000.0 if denom > 0 else 0.0
+
+
+@dataclass(frozen=True)
+class StatBlock:
+    """expectancy / stdev / standard error / rough t-stat for one series,
+    bundled so gross and net, R and bps, don't each need four loose fields."""
+    expectancy: float | None
+    stdev: float | None
+    se: float | None
+    t_stat: float | None
+
+
+def _stat_block(values: list[float]) -> StatBlock:
+    exp = _expectancy(values)
+    se = _standard_error(values)
+    return StatBlock(expectancy=exp, stdev=_stdev(values), se=se,
+                     t_stat=_t_stat(exp, se))
+
+
+def _max_drawdown(ordered: list[float]) -> float | None:
+    """Max peak-to-trough decline on a cumulative curve, in the order given
+    (caller sorts by exit_ts — realization order)."""
+    if not ordered:
         return None
     cum = 0.0
     peak = float("-inf")
     max_dd = 0.0
-    for v in ordered_net_r:
+    for v in ordered:
         cum += v
         peak = max(peak, cum)
         max_dd = max(max_dd, peak - cum)
@@ -114,31 +129,37 @@ def _max_drawdown_r(ordered_net_r: list[float]) -> float | None:
 @dataclass(frozen=True)
 class GroupStat:
     """One row of a breakdown: a subset of trades sharing a label (an
-    exit_reason like "stop", or a tag like "part1"), with its own count,
-    mean R (gross and net) and net win rate. Lets a good aggregate be
-    decomposed — e.g. whether a positive overall expectancy is carried by
-    one exit type or one entry part while another quietly bleeds."""
+    exit_reason like "stop", or a tag like "part1"), with count, mean R and
+    mean bps (gross+net) and net win rate. Decomposes a good aggregate — e.g.
+    whether a positive overall result is carried by one exit type or one entry
+    part while another quietly bleeds."""
     label: str
     n: int
     mean_r_gross: float
     mean_r_net: float
+    mean_bps_gross: float
+    mean_bps_net: float
     win_rate_net: float
 
 
-def _group_stats(records: list[tuple[float, float, str]]) -> list[GroupStat]:
-    """records: (gross_r, net_r, label). Returns one GroupStat per distinct
-    label, sorted by label for deterministic output."""
-    groups: dict[str, list[tuple[float, float]]] = defaultdict(list)
-    for gross_r, net_r, label in records:
-        groups[label].append((gross_r, net_r))
+def _group_stats(records: list[tuple[float, float, float, float, str]]) -> list[GroupStat]:
+    """records: (gross_r, net_r, gross_bps, net_bps, label). One GroupStat
+    per distinct label, sorted by label for deterministic output."""
+    groups: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
+    for gr, nr, gb, nb, label in records:
+        groups[label].append((gr, nr, gb, nb))
     out: list[GroupStat] = []
     for label in sorted(groups):
-        pairs = groups[label]
-        n = len(pairs)
-        mean_g = sum(g for g, _ in pairs) / n
-        mean_n = sum(nr for _, nr in pairs) / n
-        wr = sum(1 for _, nr in pairs if nr > 0) / n
-        out.append(GroupStat(label, n, mean_g, mean_n, wr))
+        rows = groups[label]
+        n = len(rows)
+        out.append(GroupStat(
+            label=label, n=n,
+            mean_r_gross=sum(r[0] for r in rows) / n,
+            mean_r_net=sum(r[1] for r in rows) / n,
+            mean_bps_gross=sum(r[2] for r in rows) / n,
+            mean_bps_net=sum(r[3] for r in rows) / n,
+            win_rate_net=sum(1 for r in rows if r[1] > 0) / n,
+        ))
     return out
 
 
@@ -149,24 +170,24 @@ class Metrics:
     n_sessions_part1_only: int
     n_sessions_part2_only: int
     n_sessions_both: int
-    part2_fill_rate: float | None    # any part2 fill, regardless of part1 — kept for continuity
-    scale_in_rate: float | None      # BOTH parts filled — the unambiguous scale-in number
+    part2_fill_rate: float | None    # any part2 fill, regardless of part1 — continuity
+    scale_in_rate: float | None      # BOTH parts filled — the unambiguous number
 
-    expectancy_r_gross: float | None
+    # R-multiple stats: meaningful for take trades (stop distance IS the risk
+    # there), misleading overall since the stop rarely fires. See bps below.
+    r_gross: StatBlock
+    r_net: StatBlock
     win_rate_gross: float | None
-    profit_factor_gross: float | None
-    stdev_r_gross: float | None
-    se_r_gross: float | None
-    t_stat_gross: float | None
-
-    expectancy_r_net: float | None
     win_rate_net: float | None
+    profit_factor_gross: float | None
     profit_factor_net: float | None
-    stdev_r_net: float | None
-    se_r_net: float | None
-    t_stat_net: float | None
+
+    # bps-of-entry-price stats — THE headline unit (see module docstring).
+    bps_gross: StatBlock
+    bps_net: StatBlock
 
     max_drawdown_r: float | None     # on cumulative net_r_multiple, by exit_ts
+    max_drawdown_bps: float | None   # on cumulative net_bps, by exit_ts
 
     by_exit_reason: list[GroupStat]  # take / stop / reversal
     by_tag: list[GroupStat]          # part1 / part2
@@ -177,27 +198,29 @@ def compute_metrics(trades: list[Trade], breakdowns: list[CostBreakdown],
                     n_sessions_part2_only: int, n_sessions_both: int) -> Metrics:
     """Pure aggregation — no I/O, no side effects. `breakdowns` must be the
     same trades in the same order as `trades` (as apply_costs_to_trades
-    produces); this is not re-validated here since both come from one
-    strategy run in the runner."""
+    produces)."""
     gross_r = [t.r_multiple for t in trades]
     net_r = [cb.net_r_multiple for cb in breakdowns]
+    gross_bps = [_bps(cb.gross_pnl, t.size, t.entry_price)
+                 for t, cb in zip(trades, breakdowns)]
+    net_bps = [_bps(cb.net_pnl, t.size, t.entry_price)
+               for t, cb in zip(trades, breakdowns)]
 
-    # drawdown needs realization order (exit_ts), not list order.
-    by_exit = sorted(zip(breakdowns, net_r), key=lambda pair: pair[0].trade.exit_ts)
-    ordered_net_r = [r for _, r in by_exit]
+    # drawdown needs realization order (exit_ts). Sort one index so R and bps
+    # curves stay row-aligned.
+    order = sorted(range(len(breakdowns)),
+                   key=lambda i: breakdowns[i].trade.exit_ts)
+    ordered_net_r = [net_r[i] for i in order]
+    ordered_net_bps = [net_bps[i] for i in order]
 
     any_part2 = n_sessions_part2_only + n_sessions_both
     part2_rate = (any_part2 / n_sessions) if n_sessions > 0 else None
     scale_in_rate = (n_sessions_both / n_sessions) if n_sessions > 0 else None
 
-    exp_g, exp_n = _expectancy(gross_r), _expectancy(net_r)
-    se_g, se_n = _standard_error(gross_r), _standard_error(net_r)
-
-    # aligned per-trade records for the two breakdowns
-    reason_records = [(t.r_multiple, cb.net_r_multiple, t.exit_reason)
-                      for t, cb in zip(trades, breakdowns)]
-    tag_records = [(t.r_multiple, cb.net_r_multiple, t.tag)
-                   for t, cb in zip(trades, breakdowns)]
+    reason_records = [(gross_r[i], net_r[i], gross_bps[i], net_bps[i],
+                       trades[i].exit_reason) for i in range(len(trades))]
+    tag_records = [(gross_r[i], net_r[i], gross_bps[i], net_bps[i],
+                    trades[i].tag) for i in range(len(trades))]
 
     return Metrics(
         n_trades=len(trades),
@@ -207,19 +230,16 @@ def compute_metrics(trades: list[Trade], breakdowns: list[CostBreakdown],
         n_sessions_both=n_sessions_both,
         part2_fill_rate=part2_rate,
         scale_in_rate=scale_in_rate,
-        expectancy_r_gross=exp_g,
+        r_gross=_stat_block(gross_r),
+        r_net=_stat_block(net_r),
         win_rate_gross=_win_rate(gross_r),
-        profit_factor_gross=_profit_factor(gross_r),
-        stdev_r_gross=_stdev(gross_r),
-        se_r_gross=se_g,
-        t_stat_gross=_t_stat(exp_g, se_g),
-        expectancy_r_net=exp_n,
         win_rate_net=_win_rate(net_r),
+        profit_factor_gross=_profit_factor(gross_r),
         profit_factor_net=_profit_factor(net_r),
-        stdev_r_net=_stdev(net_r),
-        se_r_net=se_n,
-        t_stat_net=_t_stat(exp_n, se_n),
-        max_drawdown_r=_max_drawdown_r(ordered_net_r),
+        bps_gross=_stat_block(gross_bps),
+        bps_net=_stat_block(net_bps),
+        max_drawdown_r=_max_drawdown(ordered_net_r),
+        max_drawdown_bps=_max_drawdown(ordered_net_bps),
         by_exit_reason=_group_stats(reason_records),
         by_tag=_group_stats(tag_records),
     )

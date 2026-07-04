@@ -118,32 +118,38 @@ def main() -> None:
           f"(part1 never filled — price passed its level before refresh)")
     print(f"  both (scale-in)    : {m.n_sessions_both:,}")
     print(f"scale-in rate        : {_fmt(m.scale_in_rate, pct=True)} "
-          f"(both parts filled — the number that answers 'does part2 average in')")
+          f"(both parts filled)")
     print(f"part-2 fill rate     : {_fmt(m.part2_fill_rate, pct=True)} "
-          f"(any part2 fill, incl. part2-only — kept for continuity, prefer scale-in rate above)")
+          f"(any part2 fill, incl. part2-only — prefer scale-in rate above)")
     print()
+    print("            (bps = basis points of entry price; 1 bps = 0.01%)")
     print("                        gross         net")
-    print(f"expectancy (R)        {_fmt(m.expectancy_r_gross):>10}   {_fmt(m.expectancy_r_net):>10}")
+    print(f"expectancy (bps)      {_fmt(m.bps_gross.expectancy):>10}   {_fmt(m.bps_net.expectancy):>10}")
+    print(f"stdev (bps)           {_fmt(m.bps_gross.stdev):>10}   {_fmt(m.bps_net.stdev):>10}")
+    print(f"std error (bps)       {_fmt(m.bps_gross.se):>10}   {_fmt(m.bps_net.se):>10}")
+    print(f"t-stat (expect./SE)   {_fmt(m.bps_gross.t_stat):>10}   {_fmt(m.bps_net.t_stat):>10}")
     print(f"win rate              {_fmt(m.win_rate_gross, pct=True):>10}   {_fmt(m.win_rate_net, pct=True):>10}")
     print(f"profit factor         {_fmt(m.profit_factor_gross):>10}   {_fmt(m.profit_factor_net):>10}")
-    print(f"stdev (R)             {_fmt(m.stdev_r_gross):>10}   {_fmt(m.stdev_r_net):>10}")
-    print(f"standard error        {_fmt(m.se_r_gross):>10}   {_fmt(m.se_r_net):>10}")
-    print(f"t-stat (expect./SE)   {_fmt(m.t_stat_gross):>10}   {_fmt(m.t_stat_net):>10}")
-    print(f"                      (rough sanity check only — |t|<~2 means")
-    print(f"                       'can\'t rule out this is noise', not a formal test)")
+    print(f"                      (t-stat is a rough sanity check only — |t|<~2")
+    print(f"                       means 'can't rule out noise', not a formal test)")
     print()
-    print(f"max drawdown (net, R) : {_fmt(m.max_drawdown_r)}")
+    print("R-multiple (denominator is distance to line-0 stop — meaningful")
+    print("only for take exits; misleading overall since the stop rarely fires):")
+    print(f"expectancy (R)        {_fmt(m.r_gross.expectancy):>10}   {_fmt(m.r_net.expectancy):>10}")
+    print()
+    print(f"max drawdown (net, bps) : {_fmt(m.max_drawdown_bps)}")
+    print(f"max drawdown (net, R)   : {_fmt(m.max_drawdown_r)}")
 
     print()
-    print("by exit reason        n     mean R (gross)  mean R (net)  win% (net)")
+    print("by exit reason        n     mean bps(gross) mean bps(net)  win% (net)")
     for g in m.by_exit_reason:
-        print(f"  {g.label:12} {g.n:>7,}   {g.mean_r_gross:>12.4f}  "
-              f"{g.mean_r_net:>12.4f}  {g.win_rate_net:>8.2%}")
+        print(f"  {g.label:12} {g.n:>7,}   {g.mean_bps_gross:>12.2f}  "
+              f"{g.mean_bps_net:>12.2f}  {g.win_rate_net:>8.2%}")
     print()
-    print("by entry part         n     mean R (gross)  mean R (net)  win% (net)")
+    print("by entry part         n     mean bps(gross) mean bps(net)  win% (net)")
     for g in m.by_tag:
-        print(f"  {g.label:12} {g.n:>7,}   {g.mean_r_gross:>12.4f}  "
-              f"{g.mean_r_net:>12.4f}  {g.win_rate_net:>8.2%}")
+        print(f"  {g.label:12} {g.n:>7,}   {g.mean_bps_gross:>12.2f}  "
+              f"{g.mean_bps_net:>12.2f}  {g.win_rate_net:>8.2%}")
 
     if args.maker_bps == 0 and args.taker_bps == 0 and args.hourly_funding_rate == 0:
         print()

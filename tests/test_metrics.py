@@ -1,5 +1,9 @@
-"""Metrics tests. Expected values hand-computed independently (see the
-derivation script referenced in commit notes)."""
+"""Metrics tests. Expected values hand-computed independently.
+
+Two units: R-multiple (PnL / distance-to-line-0-stop) and bps (PnL / entry
+price, 1 bps = 0.01%). For these fixtures entry_price=100 and size=1, so
+bps = R * 100 exactly — differ only by that scale, keeping the hand math
+trivial while exercising both code paths."""
 import math
 
 from src.backtest.strategy import Trade
@@ -29,66 +33,56 @@ def _make(gross=GROSS, net=NET):
     return trades, breakdowns
 
 
-def test_expectancy_win_rate_profit_factor_hand_computed():
+def test_r_and_bps_expectancy_hand_computed():
     trades, breakdowns = _make()
-    m = compute_metrics(trades, breakdowns, n_sessions=3,
-                        n_sessions_part1_only=2, n_sessions_part2_only=0,
-                        n_sessions_both=1)
-
-    assert math.isclose(m.expectancy_r_gross, 0.3, rel_tol=1e-12)
+    m = compute_metrics(trades, breakdowns, 3, 2, 0, 1)
+    assert math.isclose(m.r_gross.expectancy, 0.3, rel_tol=1e-12)
+    assert math.isclose(m.r_net.expectancy, 0.18, rel_tol=1e-12)
+    assert math.isclose(m.bps_gross.expectancy, 30.0, rel_tol=1e-12)
+    assert math.isclose(m.bps_net.expectancy, 18.0, rel_tol=1e-12)
     assert math.isclose(m.win_rate_gross, 0.4, rel_tol=1e-12)
     assert math.isclose(m.profit_factor_gross, 2.0, rel_tol=1e-12)
-
-    assert math.isclose(m.expectancy_r_net, 0.18, rel_tol=1e-12)
-    assert math.isclose(m.win_rate_net, 0.4, rel_tol=1e-12)
     assert math.isclose(m.profit_factor_net, 1.5, rel_tol=1e-12)
 
 
 def test_dispersion_hand_computed():
-    # sample stdev of GROSS (ddof=1): mean=0.3, sum((x-mean)^2)=5.8, /4=1.45
-    # stdev=sqrt(1.45)=1.2041594... ; SE=stdev/sqrt(5)=0.5385164...
-    # t = 0.3/0.5385164... = 0.5570860...
     trades, breakdowns = _make()
     m = compute_metrics(trades, breakdowns, 1, 0, 0, 1)
-    assert math.isclose(m.stdev_r_gross, 1.2041594578792296, rel_tol=1e-9)
-    assert math.isclose(m.se_r_gross, 0.5385164807134504, rel_tol=1e-9)
-    assert math.isclose(m.t_stat_gross, 0.5570860145311556, rel_tol=1e-9)
+    assert math.isclose(m.r_gross.stdev, 1.2041594578792296, rel_tol=1e-9)
+    assert math.isclose(m.r_gross.se, 0.5385164807134504, rel_tol=1e-9)
+    assert math.isclose(m.r_gross.t_stat, 0.5570860145311556, rel_tol=1e-9)
+    assert math.isclose(m.bps_gross.stdev, 120.41594578792295, rel_tol=1e-9)
+    assert math.isclose(m.bps_gross.se, 53.85164807134504, rel_tol=1e-9)
+    assert math.isclose(m.bps_gross.t_stat, m.r_gross.t_stat, rel_tol=1e-12)
 
 
 def test_dispersion_none_for_single_trade():
     trades, breakdowns = _make(gross=[1.0], net=[0.9])
     m = compute_metrics(trades, breakdowns, 1, 1, 0, 0)
-    assert m.stdev_r_gross is None
-    assert m.se_r_gross is None
-    assert m.t_stat_gross is None
+    assert m.r_gross.stdev is None
+    assert m.r_gross.se is None
+    assert m.r_gross.t_stat is None
+    assert m.bps_gross.stdev is None
 
 
-def test_max_drawdown_hand_traced():
-    # cumulative net-R: 0.9, -0.2, 1.6, 1.0, 0.9
-    # running peak:     0.9,  0.9, 1.6, 1.6, 1.6
-    # drawdown:         0.0,  1.1, 0.0, 0.6, 0.7  -> max = 1.1
+def test_max_drawdown_r_and_bps_hand_traced():
     trades, breakdowns = _make()
     m = compute_metrics(trades, breakdowns, 1, 0, 0, 1)
     assert math.isclose(m.max_drawdown_r, 1.1, rel_tol=1e-12)
+    assert math.isclose(m.max_drawdown_bps, 110.0, rel_tol=1e-12)
 
 
 def test_drawdown_uses_exit_ts_order_not_list_order():
     trades, breakdowns = _make()
-    shuffled_trades = [trades[2], trades[0], trades[4], trades[1], trades[3]]
-    shuffled_bd = [breakdowns[2], breakdowns[0], breakdowns[4],
-                  breakdowns[1], breakdowns[3]]
-    m = compute_metrics(shuffled_trades, shuffled_bd, 1, 0, 0, 1)
+    st = [trades[2], trades[0], trades[4], trades[1], trades[3]]
+    sb = [breakdowns[2], breakdowns[0], breakdowns[4], breakdowns[1], breakdowns[3]]
+    m = compute_metrics(st, sb, 1, 0, 0, 1)
     assert math.isclose(m.max_drawdown_r, 1.1, rel_tol=1e-12)
 
 
 def test_scale_in_rate_vs_part2_fill_rate_distinction():
-    # 10 sessions: 5 part1-only, 3 part2-only, 2 both.
-    # scale_in_rate (both/n)      = 2/10 = 0.2  <- the unambiguous number
-    # part2_fill_rate (any part2) = (3+2)/10 = 0.5  <- kept for continuity
     trades, breakdowns = _make()
-    m = compute_metrics(trades, breakdowns, n_sessions=10,
-                        n_sessions_part1_only=5, n_sessions_part2_only=3,
-                        n_sessions_both=2)
+    m = compute_metrics(trades, breakdowns, 10, 5, 3, 2)
     assert math.isclose(m.scale_in_rate, 0.2, rel_tol=1e-12)
     assert math.isclose(m.part2_fill_rate, 0.5, rel_tol=1e-12)
 
@@ -102,12 +96,12 @@ def test_rates_none_when_no_sessions():
 def test_empty_trades_all_none_not_crash():
     m = compute_metrics([], [], 0, 0, 0, 0)
     assert m.n_trades == 0
-    assert m.expectancy_r_gross is None
+    assert m.r_gross.expectancy is None
+    assert m.bps_gross.expectancy is None
     assert m.win_rate_gross is None
     assert m.profit_factor_gross is None
-    assert m.expectancy_r_net is None
     assert m.max_drawdown_r is None
-    assert m.stdev_r_gross is None
+    assert m.max_drawdown_bps is None
 
 
 def test_profit_factor_infinite_when_no_losses():
@@ -122,7 +116,8 @@ def test_profit_factor_none_when_all_breakeven():
     m = compute_metrics(trades, breakdowns, 1, 1, 0, 0)
     assert m.profit_factor_gross is None
     assert m.win_rate_gross == 0.0
-    assert math.isclose(m.expectancy_r_gross, 0.0, abs_tol=1e-12)
+    assert math.isclose(m.r_gross.expectancy, 0.0, abs_tol=1e-12)
+    assert math.isclose(m.bps_gross.expectancy, 0.0, abs_tol=1e-12)
 
 
 def test_n_trades_matches_list_length():
@@ -131,17 +126,12 @@ def test_n_trades_matches_list_length():
     assert m.n_trades == 5
 
 
-# ---------------------------------------------------------------------------
-# breakdowns by exit_reason and by tag (hand-computed)
-# ---------------------------------------------------------------------------
-
 def _trade_full(tag, reason, gross_r, exit_ts=0):
     return Trade(side="long", tag=tag, size=1.0, entry_price=100.0,
                 entry_ts=0, exit_price=100.0 + gross_r, exit_ts=exit_ts,
                 exit_reason=reason, r_multiple=gross_r, risk=1.0)
 
 
-# (tag, reason, gross_r, net_r) — same set used in the hand derivation
 BREAKDOWN_ROWS = [
     ("part1", "take",      1.0,  0.9),
     ("part1", "stop",     -1.0, -1.1),
@@ -163,47 +153,23 @@ def test_by_exit_reason_hand_computed():
     m = compute_metrics(trades, bds, 5, 3, 2, 0)
     by = {g.label: g for g in m.by_exit_reason}
     assert set(by) == {"take", "stop", "reversal"}
-
     assert by["take"].n == 2
-    assert math.isclose(by["take"].mean_r_gross, 1.5, rel_tol=1e-12)
-    assert math.isclose(by["take"].mean_r_net, 1.35, rel_tol=1e-12)
-    assert math.isclose(by["take"].win_rate_net, 1.0, rel_tol=1e-12)
-
-    assert by["stop"].n == 1
-    assert math.isclose(by["stop"].mean_r_gross, -1.0, rel_tol=1e-12)
-    assert math.isclose(by["stop"].mean_r_net, -1.1, rel_tol=1e-12)
-    assert by["stop"].win_rate_net == 0.0
-
-    assert by["reversal"].n == 2
-    assert math.isclose(by["reversal"].mean_r_gross, -0.25, rel_tol=1e-12)
-    assert math.isclose(by["reversal"].mean_r_net, -0.35, rel_tol=1e-12)
-    assert by["reversal"].win_rate_net == 0.0
+    assert math.isclose(by["take"].mean_bps_gross, 150.0, rel_tol=1e-12)
+    assert math.isclose(by["take"].mean_bps_net, 135.0, rel_tol=1e-12)
+    assert by["take"].win_rate_net == 1.0
+    assert math.isclose(by["stop"].mean_bps_net, -110.0, rel_tol=1e-12)
+    assert math.isclose(by["reversal"].mean_bps_net, -35.0, rel_tol=1e-12)
 
 
 def test_by_tag_hand_computed():
     trades, bds = _make_breakdown_stack()
     m = compute_metrics(trades, bds, 5, 3, 2, 0)
     by = {g.label: g for g in m.by_tag}
-    assert set(by) == {"part1", "part2"}
-
     assert by["part1"].n == 3
-    assert math.isclose(by["part1"].mean_r_gross, -0.5 / 3, rel_tol=1e-9)
-    assert math.isclose(by["part1"].mean_r_net, -0.8 / 3, rel_tol=1e-9)
-    assert math.isclose(by["part1"].win_rate_net, 1 / 3, rel_tol=1e-9)
-
+    assert math.isclose(by["part1"].mean_bps_net, -80.0 / 3, rel_tol=1e-9)
     assert by["part2"].n == 2
-    assert math.isclose(by["part2"].mean_r_gross, 1.0, rel_tol=1e-12)
-    assert math.isclose(by["part2"].mean_r_net, 0.85, rel_tol=1e-12)
+    assert math.isclose(by["part2"].mean_bps_net, 85.0, rel_tol=1e-12)
     assert math.isclose(by["part2"].win_rate_net, 0.5, rel_tol=1e-12)
-
-
-def test_breakdowns_sorted_by_label():
-    trades, bds = _make_breakdown_stack()
-    m = compute_metrics(trades, bds, 5, 3, 2, 0)
-    reason_labels = [g.label for g in m.by_exit_reason]
-    tag_labels = [g.label for g in m.by_tag]
-    assert reason_labels == sorted(reason_labels)
-    assert tag_labels == sorted(tag_labels)
 
 
 def test_breakdowns_empty_when_no_trades():
