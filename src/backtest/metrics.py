@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections import defaultdict
 from dataclasses import dataclass
 
 from src.backtest.strategy import Trade
@@ -111,6 +112,37 @@ def _max_drawdown_r(ordered_net_r: list[float]) -> float | None:
 
 
 @dataclass(frozen=True)
+class GroupStat:
+    """One row of a breakdown: a subset of trades sharing a label (an
+    exit_reason like "stop", or a tag like "part1"), with its own count,
+    mean R (gross and net) and net win rate. Lets a good aggregate be
+    decomposed — e.g. whether a positive overall expectancy is carried by
+    one exit type or one entry part while another quietly bleeds."""
+    label: str
+    n: int
+    mean_r_gross: float
+    mean_r_net: float
+    win_rate_net: float
+
+
+def _group_stats(records: list[tuple[float, float, str]]) -> list[GroupStat]:
+    """records: (gross_r, net_r, label). Returns one GroupStat per distinct
+    label, sorted by label for deterministic output."""
+    groups: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    for gross_r, net_r, label in records:
+        groups[label].append((gross_r, net_r))
+    out: list[GroupStat] = []
+    for label in sorted(groups):
+        pairs = groups[label]
+        n = len(pairs)
+        mean_g = sum(g for g, _ in pairs) / n
+        mean_n = sum(nr for _, nr in pairs) / n
+        wr = sum(1 for _, nr in pairs if nr > 0) / n
+        out.append(GroupStat(label, n, mean_g, mean_n, wr))
+    return out
+
+
+@dataclass(frozen=True)
 class Metrics:
     n_trades: int
     n_sessions: int
@@ -136,6 +168,9 @@ class Metrics:
 
     max_drawdown_r: float | None     # on cumulative net_r_multiple, by exit_ts
 
+    by_exit_reason: list[GroupStat]  # take / stop / reversal
+    by_tag: list[GroupStat]          # part1 / part2
+
 
 def compute_metrics(trades: list[Trade], breakdowns: list[CostBreakdown],
                     n_sessions: int, n_sessions_part1_only: int,
@@ -158,6 +193,12 @@ def compute_metrics(trades: list[Trade], breakdowns: list[CostBreakdown],
     exp_g, exp_n = _expectancy(gross_r), _expectancy(net_r)
     se_g, se_n = _standard_error(gross_r), _standard_error(net_r)
 
+    # aligned per-trade records for the two breakdowns
+    reason_records = [(t.r_multiple, cb.net_r_multiple, t.exit_reason)
+                      for t, cb in zip(trades, breakdowns)]
+    tag_records = [(t.r_multiple, cb.net_r_multiple, t.tag)
+                   for t, cb in zip(trades, breakdowns)]
+
     return Metrics(
         n_trades=len(trades),
         n_sessions=n_sessions,
@@ -179,4 +220,6 @@ def compute_metrics(trades: list[Trade], breakdowns: list[CostBreakdown],
         se_r_net=se_n,
         t_stat_net=_t_stat(exp_n, se_n),
         max_drawdown_r=_max_drawdown_r(ordered_net_r),
+        by_exit_reason=_group_stats(reason_records),
+        by_tag=_group_stats(tag_records),
     )

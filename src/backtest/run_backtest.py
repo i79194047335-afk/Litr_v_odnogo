@@ -134,6 +134,17 @@ def main() -> None:
     print()
     print(f"max drawdown (net, R) : {_fmt(m.max_drawdown_r)}")
 
+    print()
+    print("by exit reason        n     mean R (gross)  mean R (net)  win% (net)")
+    for g in m.by_exit_reason:
+        print(f"  {g.label:12} {g.n:>7,}   {g.mean_r_gross:>12.4f}  "
+              f"{g.mean_r_net:>12.4f}  {g.win_rate_net:>8.2%}")
+    print()
+    print("by entry part         n     mean R (gross)  mean R (net)  win% (net)")
+    for g in m.by_tag:
+        print(f"  {g.label:12} {g.n:>7,}   {g.mean_r_gross:>12.4f}  "
+              f"{g.mean_r_net:>12.4f}  {g.win_rate_net:>8.2%}")
+
     if args.maker_bps == 0 and args.taker_bps == 0 and args.hourly_funding_rate == 0:
         print()
         print("NOTE: costs are all zero (defaults) — gross and net differ only")

@@ -129,3 +129,84 @@ def test_n_trades_matches_list_length():
     trades, breakdowns = _make()
     m = compute_metrics(trades, breakdowns, 3, 2, 0, 1)
     assert m.n_trades == 5
+
+
+# ---------------------------------------------------------------------------
+# breakdowns by exit_reason and by tag (hand-computed)
+# ---------------------------------------------------------------------------
+
+def _trade_full(tag, reason, gross_r, exit_ts=0):
+    return Trade(side="long", tag=tag, size=1.0, entry_price=100.0,
+                entry_ts=0, exit_price=100.0 + gross_r, exit_ts=exit_ts,
+                exit_reason=reason, r_multiple=gross_r, risk=1.0)
+
+
+# (tag, reason, gross_r, net_r) — same set used in the hand derivation
+BREAKDOWN_ROWS = [
+    ("part1", "take",      1.0,  0.9),
+    ("part1", "stop",     -1.0, -1.1),
+    ("part2", "take",      2.0,  1.8),
+    ("part1", "reversal", -0.5, -0.6),
+    ("part2", "reversal",  0.0, -0.1),
+]
+
+
+def _make_breakdown_stack():
+    trades = [_trade_full(tag, reason, gr, exit_ts=i)
+              for i, (tag, reason, gr, _) in enumerate(BREAKDOWN_ROWS)]
+    bds = [_breakdown(t, nr) for t, (_, _, _, nr) in zip(trades, BREAKDOWN_ROWS)]
+    return trades, bds
+
+
+def test_by_exit_reason_hand_computed():
+    trades, bds = _make_breakdown_stack()
+    m = compute_metrics(trades, bds, 5, 3, 2, 0)
+    by = {g.label: g for g in m.by_exit_reason}
+    assert set(by) == {"take", "stop", "reversal"}
+
+    assert by["take"].n == 2
+    assert math.isclose(by["take"].mean_r_gross, 1.5, rel_tol=1e-12)
+    assert math.isclose(by["take"].mean_r_net, 1.35, rel_tol=1e-12)
+    assert math.isclose(by["take"].win_rate_net, 1.0, rel_tol=1e-12)
+
+    assert by["stop"].n == 1
+    assert math.isclose(by["stop"].mean_r_gross, -1.0, rel_tol=1e-12)
+    assert math.isclose(by["stop"].mean_r_net, -1.1, rel_tol=1e-12)
+    assert by["stop"].win_rate_net == 0.0
+
+    assert by["reversal"].n == 2
+    assert math.isclose(by["reversal"].mean_r_gross, -0.25, rel_tol=1e-12)
+    assert math.isclose(by["reversal"].mean_r_net, -0.35, rel_tol=1e-12)
+    assert by["reversal"].win_rate_net == 0.0
+
+
+def test_by_tag_hand_computed():
+    trades, bds = _make_breakdown_stack()
+    m = compute_metrics(trades, bds, 5, 3, 2, 0)
+    by = {g.label: g for g in m.by_tag}
+    assert set(by) == {"part1", "part2"}
+
+    assert by["part1"].n == 3
+    assert math.isclose(by["part1"].mean_r_gross, -0.5 / 3, rel_tol=1e-9)
+    assert math.isclose(by["part1"].mean_r_net, -0.8 / 3, rel_tol=1e-9)
+    assert math.isclose(by["part1"].win_rate_net, 1 / 3, rel_tol=1e-9)
+
+    assert by["part2"].n == 2
+    assert math.isclose(by["part2"].mean_r_gross, 1.0, rel_tol=1e-12)
+    assert math.isclose(by["part2"].mean_r_net, 0.85, rel_tol=1e-12)
+    assert math.isclose(by["part2"].win_rate_net, 0.5, rel_tol=1e-12)
+
+
+def test_breakdowns_sorted_by_label():
+    trades, bds = _make_breakdown_stack()
+    m = compute_metrics(trades, bds, 5, 3, 2, 0)
+    reason_labels = [g.label for g in m.by_exit_reason]
+    tag_labels = [g.label for g in m.by_tag]
+    assert reason_labels == sorted(reason_labels)
+    assert tag_labels == sorted(tag_labels)
+
+
+def test_breakdowns_empty_when_no_trades():
+    m = compute_metrics([], [], 0, 0, 0, 0)
+    assert m.by_exit_reason == []
+    assert m.by_tag == []
