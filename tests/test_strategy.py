@@ -35,7 +35,7 @@ import math
 import pytest
 
 from src.backtest.replay import Replay
-from src.backtest.orders import FillEngine
+from src.backtest.orders import FillEngine, Fill
 from src.backtest.strategy import WFStrategy, compute_bias, zone_lines, trail_stop
 
 
@@ -271,3 +271,67 @@ def test_trailing_wiring_integration():
     assert math.isclose(stop.price, 106.4, rel_tol=1e-9)
 
     assert s.trades == []          # nothing exited — still in position
+
+
+# ---------------------------------------------------------------------------
+# Slice 5: session counters for part-2 fill rate + has_open_position
+# ---------------------------------------------------------------------------
+
+def test_session_counters_take_only_part2_not_joined():
+    # part1 fills, take fires before part2 ever fills -> one session, part1-only.
+    r, e, s = make_stack()
+    r.run(WARMUP + [(104.4, 200_000), (105.6, 210_000)], s)
+    assert s.n_sessions == 1
+    assert s.n_sessions_part1_only == 1
+    assert s.n_sessions_part2_only == 0
+    assert s.n_sessions_both == 0
+
+
+def test_session_counters_gap_scenario_part2_joined():
+    # both part1 and part2 fill on the same gap tick, then stop flattens both
+    # -> one session, BOTH parts joined (genuine scale-in).
+    r, e, s = make_stack()
+    r.run(WARMUP + [(104.4, 200_000), (102.3, 210_000)], s)
+    assert s.n_sessions == 1
+    assert s.n_sessions_part1_only == 0
+    assert s.n_sessions_part2_only == 0
+    assert s.n_sessions_both == 1
+
+
+def test_has_open_position_true_while_unresolved():
+    r, e, s = make_stack()
+    r.run(WARMUP + [(104.4, 200_000)], s)   # part1 filled, nothing exits
+    assert s.has_open_position is True
+    assert s.n_sessions == 0                # not counted until _flat_reset
+
+
+def test_has_open_position_false_after_exit():
+    r, e, s = make_stack()
+    r.run(WARMUP + [(104.4, 200_000), (105.6, 210_000)], s)
+    assert s.has_open_position is False
+    assert s.n_sessions == 1
+
+
+def test_session_counters_part2_only_via_direct_fill_handling():
+    # A natural part2-only session needs a PRIOR bar refresh to have already
+    # dropped part1 from consideration (price passed its line before the
+    # refresh that would have placed it) — real data confirms this path is
+    # common (666/2909 sessions on live BTC), but engineering the exact
+    # multi-bar tick sequence to hit it "naturally" here would test the bar
+    # mechanics, not the counter. So this drives _handle_fill directly to
+    # isolate what's actually under test: does a part2-only fill sequence
+    # get classified correctly.
+    r, e, s = make_stack()
+    s._lines = {"0": 90.0, "q": 95.0, "h": 100.0, "tq": 105.0, "1": 110.0}
+    s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=95.0,
+                        size=1.0, ts=1000, tag="part2"))
+    assert s._part1_joined is False
+    assert s._part2_joined is True
+    s._handle_fill(Fill(order_id=2, side="sell", kind="stop", price=89.0,
+                        size=1.0, ts=2000, tag="stop"))
+    assert s.n_sessions == 1
+    assert s.n_sessions_part1_only == 0
+    assert s.n_sessions_part2_only == 1
+    assert s.n_sessions_both == 0
+    assert len(s.trades) == 1
+    assert s.trades[0].tag == "part2"

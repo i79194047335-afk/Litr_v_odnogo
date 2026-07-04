@@ -176,6 +176,22 @@ class WFStrategy:
         self._stop_price: float | None = None             # fixed at first fill
         self.trades: list[Trade] = []
 
+        # Slice 5 instrumentation, corrected 2026-07-04: session outcomes are
+        # tracked as three DISTINCT categories, not one binary "part2 joined"
+        # flag. A binary flag conflates "part1 THEN part2 joined" (genuine
+        # scale-in) with "part1 never filled, ONLY part2 filled alone" (price
+        # already passed part1's level before the next bar's resting-order
+        # refresh could place it — see _refresh_entries' resting guard). On
+        # real data these turned out to be wildly different in size (13 vs
+        # 666 out of 2909 sessions) — a single "part2 fill rate" number was
+        # actively misleading about which one was happening.
+        self._part1_joined = False
+        self._part2_joined = False
+        self.n_sessions = 0
+        self.n_sessions_part1_only = 0
+        self.n_sessions_part2_only = 0
+        self.n_sessions_both = 0
+
     # --- helpers ----------------------------------------------------------------
 
     def bias(self) -> Bias | None:
@@ -215,11 +231,31 @@ class WFStrategy:
             self._take_id = None
 
     def _flat_reset(self) -> None:
+        if self._side is not None:      # a session was genuinely open
+            self.n_sessions += 1
+            if self._part1_joined and self._part2_joined:
+                self.n_sessions_both += 1
+            elif self._part1_joined:
+                self.n_sessions_part1_only += 1
+            elif self._part2_joined:
+                self.n_sessions_part2_only += 1
+            # no other case is reachable: a session only exists once at
+            # least one part has filled (see _handle_fill's `if not self._pos`)
         self._cancel_entries()
         self._cancel_protection()
         self._pos.clear()
         self._side = None
         self._stop_price = None
+        self._part1_joined = False
+        self._part2_joined = False
+
+    @property
+    def has_open_position(self) -> bool:
+        """True if a position is still open — e.g. at the end of the data
+        window. Such a position is NOT in self.trades (unrealized) and NOT
+        counted in n_sessions (never reached _flat_reset) — same "don't
+        fabricate closure" discipline as replay.py's still-open final bar."""
+        return bool(self._pos)
 
     def _exit_all(self, price: float, ts: int, reason: str) -> None:
         for part in self._pos:
@@ -246,6 +282,10 @@ class WFStrategy:
                 self._stop_price = self._lines["0"]
             self._pos.append({"tag": f.tag, "entry_price": f.price,
                               "entry_ts": f.ts, "size": f.size})
+            if f.tag == "part1":
+                self._part1_joined = True
+            else:
+                self._part2_joined = True
             self._replace_stop()
             if f.tag == "part1":
                 take_side = "sell" if self._side == "long" else "buy"
