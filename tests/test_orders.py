@@ -1,6 +1,8 @@
 """Fill engine tests. Every expected outcome hand-reasoned from the rules:
 limit = through-not-touch, fills at limit price;
 stop  = touch-triggers, fills at TICK price (gap included)."""
+import math
+
 import pytest
 
 from src.backtest.orders import FillEngine, Order, Fill
@@ -144,3 +146,110 @@ def test_validation():
         e.place("buy", "limit", 100.0, 0.0)
     with pytest.raises(ValueError):
         e.place("buy", "limit", -5.0, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Slice 4b: slippage (stops only) — hand-computed
+# ---------------------------------------------------------------------------
+
+def test_sell_stop_touch_with_slippage():
+    e = FillEngine(slippage_ticks=2, tick_size=0.1)
+    e.place("sell", "stop", 95.0, 1.0)
+    fills = e.on_tick(95.0, 1)
+    assert math.isclose(fills[0].price, 94.8, rel_tol=1e-9)
+
+
+def test_sell_stop_gap_with_slippage_stacks_on_gap():
+    e = FillEngine(slippage_ticks=2, tick_size=0.1)
+    e.place("sell", "stop", 95.0, 1.0)
+    e.on_tick(100.0, 1)
+    fills = e.on_tick(90.0, 2)
+    assert math.isclose(fills[0].price, 89.8, rel_tol=1e-9)
+
+
+def test_buy_stop_gap_with_slippage():
+    e = FillEngine(slippage_ticks=2, tick_size=0.1)
+    e.place("buy", "stop", 105.0, 1.0)
+    fills = e.on_tick(106.0, 1)
+    assert math.isclose(fills[0].price, 106.2, rel_tol=1e-9)
+
+
+def test_zero_slippage_matches_slice2_exactly():
+    e = FillEngine(slippage_ticks=0.0, tick_size=0.1)
+    e.place("sell", "stop", 95.0, 1.0)
+    fills = e.on_tick(90.0, 1)
+    assert fills[0].price == 90.0            # no slippage adjustment at all
+
+
+def test_slippage_does_not_apply_to_limits():
+    # limit fills must stay at the exact limit price regardless of slippage
+    # config — slippage is stops-only by design.
+    e = FillEngine(slippage_ticks=5, tick_size=1.0)
+    e.place("buy", "limit", 100.0, 1.0)
+    fills = e.on_tick(99.0, 1)
+    assert fills[0].price == 100.0
+
+
+def test_slippage_ticks_without_tick_size_raises():
+    with pytest.raises(ValueError):
+        FillEngine(slippage_ticks=2, tick_size=0.0)
+
+
+def test_negative_slippage_raises():
+    with pytest.raises(ValueError):
+        FillEngine(slippage_ticks=-1, tick_size=0.1)
+
+
+# ---------------------------------------------------------------------------
+# Slice 4b: fill probability (limits only) — deterministic fake RNG
+# ---------------------------------------------------------------------------
+
+class FakeRng:
+    """Returns a fixed, pre-scripted sequence — no real randomness, fully
+    hand-reasoned test outcomes."""
+    def __init__(self, values):
+        self._values = iter(values)
+
+    def random(self):
+        return next(self._values)
+
+
+class PoisonRng:
+    """Raises if .random() is ever called — proves fill_probability=1.0
+    skips the roll entirely rather than always consuming the RNG."""
+    def random(self):
+        raise AssertionError("random() called despite fill_probability=1.0")
+
+
+def test_default_fill_probability_never_touches_rng():
+    e = FillEngine(rng=PoisonRng())
+    e.place("buy", "limit", 100.0, 1.0)
+    fills = e.on_tick(99.0, 1)             # would raise if rng.random() called
+    assert len(fills) == 1
+
+
+def test_failed_roll_keeps_order_resting_then_succeeds():
+    # roll 0.9 >= 0.5 -> fail, stays resting; roll 0.3 < 0.5 -> fills next tick.
+    e = FillEngine(fill_probability=0.5, rng=FakeRng([0.9, 0.3]))
+    e.place("buy", "limit", 100.0, 1.0)
+    assert e.on_tick(99.0, 1) == []
+    assert len(e.open_orders) == 1
+    fills = e.on_tick(98.0, 2)
+    assert len(fills) == 1
+    assert fills[0].price == 100.0
+
+
+def test_fill_probability_does_not_apply_to_stops():
+    # a stop must fill deterministically on touch even with a "hostile" rng
+    # that would fail every roll — probability is limits-only.
+    e = FillEngine(fill_probability=0.5, rng=FakeRng([0.99, 0.99, 0.99]))
+    e.place("sell", "stop", 95.0, 1.0)
+    fills = e.on_tick(94.0, 1)
+    assert len(fills) == 1
+
+
+def test_fill_probability_bounds_validation():
+    with pytest.raises(ValueError):
+        FillEngine(fill_probability=0.0)
+    with pytest.raises(ValueError):
+        FillEngine(fill_probability=1.5)

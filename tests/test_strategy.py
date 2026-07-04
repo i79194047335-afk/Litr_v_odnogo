@@ -36,7 +36,7 @@ import pytest
 
 from src.backtest.replay import Replay
 from src.backtest.orders import FillEngine
-from src.backtest.strategy import WFStrategy, compute_bias, zone_lines
+from src.backtest.strategy import WFStrategy, compute_bias, zone_lines, trail_stop
 
 
 # ---------------------------------------------------------------------------
@@ -202,3 +202,72 @@ def test_scenario_reversal_bar_exits_remaining():
     orders = {o.tag: o for o in e.open_orders}
     assert set(orders) == {"part2"}
     assert math.isclose(orders["part2"].price, 103.55, rel_tol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Slice 4c: trailing — pure trail_stop rule + wiring integration
+# ---------------------------------------------------------------------------
+
+def test_trail_stop_long_tightens_up():
+    assert trail_stop("long", 100.0, 105.0, 110.0) == 105.0
+
+
+def test_trail_stop_long_never_loosens():
+    # bar low BELOW current stop must leave the stop unchanged.
+    assert trail_stop("long", 100.0, 95.0, 110.0) == 100.0
+
+
+def test_trail_stop_short_tightens_down():
+    assert trail_stop("short", 100.0, 90.0, 95.0) == 95.0
+
+
+def test_trail_stop_short_never_loosens():
+    assert trail_stop("short", 100.0, 90.0, 105.0) == 100.0
+
+
+def test_trail_stop_exact_equal_is_unchanged():
+    assert trail_stop("long", 100.0, 100.0, 110.0) == 100.0
+
+
+def test_trailing_off_by_default_regression_guard():
+    # identical rising-low bar sequence as the wiring test below, but
+    # trailing defaults to False -> stop must stay at the static 0-line.
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=3.0, mult_outer=6.0,
+                   part_size=1.0)   # trailing defaults to False
+    r.run(WARMUP, s)
+    r.run([(104.4, 200_000)], s)
+    r.run([(106.0, 210_000)], s)
+    stops = [o for o in e.open_orders if o.tag == "stop"]
+    assert stops[0].price == 98.5     # unchanged: line 0 with mult_outer=6
+
+
+def test_trailing_wiring_integration():
+    # Ground truth for the bars this tick sequence produces comes from
+    # Slice 1's already-tested RangeBarBuilder (independently re-derived,
+    # not read from this strategy): tick 106.0 closes ONE bar
+    # (o=105.0,h=105.4,l=104.4,c=105.4); tick 107.4 then closes TWO bars
+    # (o=105.4,h=106.4,l=105.4,c=106.4) and (o=106.4,h=107.4,l=106.4,c=107.4).
+    # Applying trail_stop (the function under test) by hand to each bar's
+    # low in sequence, starting from the static stop 98.5 (line 0 with
+    # mult_outer=6):
+    #   bar(l=104.4): max(98.5, 104.4)  = 104.4
+    #   bar(l=105.4): max(104.4, 105.4) = 105.4
+    #   bar(l=106.4): max(105.4, 106.4) = 106.4
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=3.0, mult_outer=6.0,
+                   part_size=1.0, trailing=True)
+    r.run(WARMUP, s)
+    r.run([(104.4, 200_000)], s)
+
+    r.run([(106.0, 210_000)], s)
+    stop = next(o for o in e.open_orders if o.tag == "stop")
+    assert math.isclose(stop.price, 104.4, rel_tol=1e-9)
+
+    r.run([(107.4, 220_000)], s)
+    stop = next(o for o in e.open_orders if o.tag == "stop")
+    assert math.isclose(stop.price, 106.4, rel_tol=1e-9)
+
+    assert s.trades == []          # nothing exited — still in position

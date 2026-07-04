@@ -9,8 +9,6 @@ the Slice-2 fill engine (orders.py). Decisions fixed in review before coding:
       bull:  ema_fast > ema_slow  AND  last_closed_1m.close > ema_fast
       bear:  ema_fast < ema_slow  AND  last_closed_1m.close < ema_fast
       else:  None -> do not trade, cancel resting entries.
-      Gated on BOTH EMAs being past warm-up (.ready) — seed-biased values
-      are not signal.
 
   LINES (why mults 4 and 8 give evenly spaced lines: inner = outer/2):
       bull flow, bottom->top:  0 = c - mo*r, 1/4 = c - mi*r, 1/2 = c,
@@ -28,10 +26,23 @@ the Slice-2 fill engine (orders.py). Decisions fixed in review before coding:
   STOP: static, at the 0-line AS OF the first entry fill. Parameter-free
       reading of "stop past the 0-line": the stop rests exactly AT line 0 —
       touching it means the flow structure broke. Covers the total held
-      size; resized (same price) when part2 joins. Trailing is deliberately
-      Slice 4 — first measure the base system, then measure trailing's
-      contribution separately (the diary's x5 claim deserves its own
-      experiment, not silent inclusion).
+      size; resized (same price) when part2 joins.
+
+  TRAILING (Slice 4, optional, default OFF — see costs.py's sibling for the
+      same "default neutral" pattern): the diary's mrcvokka reports a big
+      PnL improvement from trailing but never states a concrete rule — it's
+      an anecdote ("trailing gave x5"), not a spec (checked the diary
+      directly, 2026-07-04: no formula anywhere, only the qualitative
+      claim). The rule below is an engineering choice, not an extraction:
+          long:  new_stop = max(current_stop, last_closed_bar.low)
+          short: new_stop = min(current_stop, last_closed_bar.high)
+      i.e. trail to the most recently closed range bar's low/high, TIGHTEN
+      ONLY — a bar whose low fell below the current stop must never loosen
+      it. Uses range-bar structure directly rather than inventing a new
+      distance parameter (no ATR multiplier, no fixed offset). Checked on
+      every closed bar while in a position, after the reversal check (so a
+      bar that already triggered a reversal exit doesn't also trail into
+      an empty position).
 
   EXITS:
       part1 -> take-profit limit at the 3/4 line as of entry.
@@ -86,6 +97,21 @@ def compute_bias(ema_fast: float | None, ema_slow: float | None,
     return None
 
 
+def trail_stop(side: Literal["long", "short"], current_stop: float,
+               bar_low: float, bar_high: float) -> float:
+    """Tighten-only trailing candidate from one closed range bar.
+
+    long:  candidate = bar_low,  only ever moves the stop UP (max).
+    short: candidate = bar_high, only ever moves the stop DOWN (min).
+    A candidate on the wrong side of the current stop leaves it unchanged —
+    this function can never loosen a stop, by construction (max/min, not
+    unconditional assignment).
+    """
+    if side == "long":
+        return max(current_stop, bar_low)
+    return min(current_stop, bar_high)
+
+
 def zone_lines(centerline: float, range_sma: float,
                mult_inner: float, mult_outer: float, bias: Bias) -> dict[str, float]:
     """Map the two Keltner channels to the 0/quarter/half/3q/1 lines.
@@ -116,6 +142,10 @@ class Trade:
     exit_ts: int
     exit_reason: Literal["take", "stop", "reversal"]
     r_multiple: float           # signed, risk = |entry - stop at entry|
+    risk: float = 0.0           # |entry - stop at entry|, in price units — stored
+                                 # explicitly (not just implied by r_multiple) so
+                                 # Slice 4 cost functions can recompute net R
+                                 # without dividing by a possibly-zero r_multiple.
 
 
 # --- the strategy --------------------------------------------------------------
@@ -126,13 +156,14 @@ class WFStrategy:
     def __init__(self, replay: Replay, engine: FillEngine,
                  keltner_period: int = 35,
                  mult_inner: float = 4.0, mult_outer: float = 8.0,
-                 part_size: float = 1.0):
+                 part_size: float = 1.0, trailing: bool = False):
         self.r = replay
         self.e = engine
         self.keltner = KeltnerCore(keltner_period)
         self.mult_inner = mult_inner
         self.mult_outer = mult_outer
         self.part_size = part_size
+        self.trailing = trailing
 
         self._last_price: float | None = None
         self._lines: dict[str, float] | None = None       # as of last bar close
@@ -167,7 +198,7 @@ class WFStrategy:
             side=self._side, tag=part["tag"], size=part["size"],
             entry_price=part["entry_price"], entry_ts=part["entry_ts"],
             exit_price=exit_price, exit_ts=exit_ts,
-            exit_reason=reason, r_multiple=r_mult,
+            exit_reason=reason, r_multiple=r_mult, risk=risk,
         ))
 
     def _cancel_entries(self) -> None:
@@ -245,6 +276,18 @@ class WFStrategy:
             else:
                 self._replace_stop()   # resize to remaining part2
 
+    def _maybe_trail(self, bar) -> None:
+        """No-op unless trailing is on and we're in a position — a
+        replacement stop is only issued when the candidate actually
+        tightens (trail_stop returns unchanged otherwise, so the price
+        comparison below correctly skips a needless cancel/replace)."""
+        if not self.trailing or not self._pos:
+            return
+        new_stop = trail_stop(self._side, self._stop_price, bar.low, bar.high)
+        if new_stop != self._stop_price:
+            self._stop_price = new_stop
+            self._replace_stop()
+
     # --- entry refresh --------------------------------------------------------------
 
     def _refresh_entries(self) -> None:
@@ -284,6 +327,9 @@ class WFStrategy:
                        (self._side == "short" and bar.close > bar.open)
             if opposite:
                 self._exit_all(bar.close, bar.end_ts, "reversal")
+
+        if self._pos:                    # still in position (didn't just exit)
+            self._maybe_trail(bar)
 
         if not self._pos:
             self._refresh_entries()

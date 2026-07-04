@@ -41,16 +41,43 @@ FILL RULES (the honesty core — see docs/ytc_scalper_skeleton.md §4.4/§4.6):
 SIMPLIFICATIONS (documented, revisit in later slices):
   - Fills are all-or-nothing: no partial fills. Beggs notes part-2 orders
     often don't fill AT ALL — that is modeled by through-not-touch plus the
-    future fill-rate knob, not by partials. Partial-fill modeling would need
-    trade SIZE against queue depth, which tick data alone can't support
-    honestly.
+    fill-probability knob below, not by partials. Partial-fill modeling
+    would need trade SIZE against queue depth, which tick data alone can't
+    support honestly.
   - One tick can fill multiple orders; each order fills at most once and is
     removed from the book on fill.
   - No order expiry/TTL yet — the strategy slice cancels explicitly.
+
+SLICE 4 ADDITIONS — slippage and fill-probability, both default to neutral:
+
+  SLIPPAGE (stops only): `slippage_ticks` * `tick_size` added in the adverse
+    direction on top of the tick price a stop already fills at. Applies
+    ONLY to stops. A maker limit fill gets exactly the resting price by
+    definition — that's what "maker" means; slippage as a concept doesn't
+    apply there, and "through, not touch" already does the realistic job
+    for queue uncertainty on that side. This stacks with gap slippage
+    (already unmitigated): a gapped stop fill is adjusted by slippage_ticks
+    on top of the gapped tick price. slippage_ticks=0 (default) -> byte-
+    identical to Slice 2. Setting slippage_ticks > 0 requires tick_size > 0
+    (raises otherwise) — a silent no-op from a forgotten tick_size would be
+    worse than an explicit error.
+
+  FILL PROBABILITY (limits only): models queue position without needing
+    order-book depth data. Each tick that satisfies "price traded through
+    my limit" rolls once against `fill_probability`. Fail the roll -> the
+    order stays resting (NOT cancelled) and is re-rolled on the next
+    qualifying tick. This compounds the way queue intuition suggests it
+    should: the longer price stays through your level, the more likely you
+    eventually fill. fill_probability=1.0 (default) skips the roll
+    entirely — no RNG call happens, so behavior and RNG state are both
+    byte-identical to Slice 2. Does NOT apply to stops: touching a stop is
+    a deterministic trigger (it becomes a market order), no queue involved
+    — only slippage models a stop's imperfect execution.
 """
 from __future__ import annotations
 
 import itertools
+import random
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -82,7 +109,24 @@ class Fill:
 class FillEngine:
     """Holds resting orders; on_tick() reports fills per the rules above."""
 
-    def __init__(self):
+    def __init__(self, slippage_ticks: float = 0.0, tick_size: float = 0.0,
+                fill_probability: float = 1.0,
+                rng: "random.Random | None" = None):
+        if slippage_ticks < 0:
+            raise ValueError(f"slippage_ticks must be >= 0, got {slippage_ticks}")
+        if slippage_ticks > 0 and tick_size <= 0:
+            raise ValueError(
+                "tick_size must be > 0 when slippage_ticks > 0 "
+                "(a silent no-op here would be worse than this error)"
+            )
+        if not (0.0 < fill_probability <= 1.0):
+            raise ValueError(
+                f"fill_probability must be in (0, 1], got {fill_probability}"
+            )
+        self.slippage_ticks = slippage_ticks
+        self.tick_size = tick_size
+        self.fill_probability = fill_probability
+        self._rng = rng if rng is not None else random.Random()
         self._orders: dict[int, Order] = {}
         self._next_id = itertools.count(1)
 
@@ -120,24 +164,33 @@ class FillEngine:
 
     def on_tick(self, price: float, ts: int) -> list[Fill]:
         """Check every resting order against one tick. Returns fills
-        (possibly several). Filled orders are removed from the book."""
+        (possibly several). Filled orders are removed from the book.
+
+        A limit order that qualifies (through-not-touch) but loses its
+        fill_probability roll stays resting — it is NOT removed, and will
+        be re-rolled on the next qualifying tick (see module docstring)."""
         fills: list[Fill] = []
         for order in list(self._orders.values()):
             filled_at: float | None = None
 
             if order.kind == "limit":
-                if order.side == "buy" and price < order.price:
-                    filled_at = order.price          # rested at P, traded through
-                elif order.side == "sell" and price > order.price:
-                    filled_at = order.price
+                through = (order.side == "buy" and price < order.price) or \
+                         (order.side == "sell" and price > order.price)
+                if not through:
+                    continue
+                if self.fill_probability < 1.0 and \
+                        self._rng.random() >= self.fill_probability:
+                    continue          # lost the queue roll — stays resting
+                filled_at = order.price      # rested at P, traded through
             else:  # stop
-                if order.side == "sell" and price <= order.price:
-                    filled_at = price                # market order at the tick
-                elif order.side == "buy" and price >= order.price:
-                    filled_at = price
+                touched = (order.side == "sell" and price <= order.price) or \
+                         (order.side == "buy" and price >= order.price)
+                if not touched:
+                    continue
+                slip = self.slippage_ticks * self.tick_size
+                filled_at = price - slip if order.side == "sell" else price + slip
 
-            if filled_at is not None:
-                del self._orders[order.id]
-                fills.append(Fill(order.id, order.side, order.kind,
-                                  filled_at, order.size, ts, order.tag))
+            del self._orders[order.id]
+            fills.append(Fill(order.id, order.side, order.kind,
+                              filled_at, order.size, ts, order.tag))
         return fills
