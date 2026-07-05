@@ -46,12 +46,27 @@ the Slice-2 fill engine (orders.py). Decisions fixed in review before coding:
 
   EXITS:
       part1 -> take-profit limit at the 3/4 line as of entry.
-      part2 -> market exit at the close of the first OPPOSITE range bar
-               (long: close < open; short: close > open).
-      SIMPLIFICATION (documented): an opposite bar closes the ENTIRE
-      remaining position, part1 included if its take hasn't filled yet.
-      Beggs holds part1 to target, but "reversal closes everything" is the
-      conservative single rule; revisit if part1's numbers look distorted.
+      part2 -> exit condition depends on `exit_mode` (added 2026-07-05):
+
+        exit_mode="bar" (DEFAULT, Slice 3 original): market exit at the
+          close of the first OPPOSITE range bar (long: close < open; short:
+          close > open). Cheap to compute, but on real data this fires on
+          97%+ of trades because a single opposite bar happens roughly every
+          2 bars by construction (verified against a fair-coin baseline) —
+          it is NOT what Beggs describes as a reversal. Kept as the default
+          ONLY so every existing test and prior result stays reproducible;
+          not recommended for new runs.
+
+        exit_mode="swing" (Beggs-faithful, see swings.py): exit only when
+          the swing structure actually breaks AND price accepts the break
+          for one further bar (see swings.py's module docstring for the
+          full two-stage rule and its sourcing from the uploaded articles).
+          Requires a SwingTracker fed alongside the Keltner core.
+
+      SIMPLIFICATION (documented, either exit_mode): an opposite-bar or
+      accepted-break signal closes the ENTIRE remaining position, part1
+      included if its take hasn't filled yet. Beggs holds part1 to target;
+      "reversal closes everything" is the conservative single rule.
       A stop fill flattens the ENTIRE position at the stop's fill price —
       if a gap tick fills an entry and the stop simultaneously, the stop
       wins and everything is out at the gapped price (gap honesty).
@@ -78,6 +93,7 @@ from typing import Literal
 
 from src.backtest.replay import Replay
 from src.backtest.orders import FillEngine, Fill
+from src.backtest.swings import SwingTracker, check_break_and_acceptance
 from src.indicators.keltner import KeltnerCore
 
 Bias = Literal["bull", "bear"]
@@ -156,7 +172,9 @@ class WFStrategy:
     def __init__(self, replay: Replay, engine: FillEngine,
                  keltner_period: int = 35,
                  mult_inner: float = 4.0, mult_outer: float = 8.0,
-                 part_size: float = 1.0, trailing: bool = False):
+                 part_size: float = 1.0, trailing: bool = False,
+                 exit_mode: Literal["bar", "swing"] = "bar",
+                 swing_confirm_bars: int = 2):
         self.r = replay
         self.e = engine
         self.keltner = KeltnerCore(keltner_period)
@@ -164,6 +182,9 @@ class WFStrategy:
         self.mult_outer = mult_outer
         self.part_size = part_size
         self.trailing = trailing
+        self.exit_mode = exit_mode
+        self.swings = SwingTracker(swing_confirm_bars) if exit_mode == "swing" else None
+        self._break_pending = False
 
         self._last_price: float | None = None
         self._lines: dict[str, float] | None = None       # as of last bar close
@@ -246,6 +267,7 @@ class WFStrategy:
         self._pos.clear()
         self._side = None
         self._stop_price = None
+        self._break_pending = False
         self._part1_joined = False
         self._part2_joined = False
 
@@ -359,13 +381,31 @@ class WFStrategy:
         for f in self.e.on_tick(price, ts):
             self._handle_fill(f)
 
+    def _check_reversal_bar_mode(self, bar) -> bool:
+        """Slice 3 original: exit on the first opposite bar. See module
+        docstring for why this over-triggers on real data."""
+        return (self._side == "long" and bar.close < bar.open) or \
+               (self._side == "short" and bar.close > bar.open)
+
+    def _check_reversal_swing_mode(self, bar) -> bool:
+        """Beggs-faithful: break-and-acceptance against swing structure."""
+        exit_now, self._break_pending = check_break_and_acceptance(
+            self._side, self.swings.last_swing_low, self.swings.last_swing_high,
+            self._break_pending, bar,
+        )
+        return exit_now
+
     def on_range_bar(self, bar) -> None:
         self.keltner.update(bar)
+        if self.swings is not None:
+            self.swings.update(bar)     # tracks continuously, position or not
 
         if self._pos:
-            opposite = (self._side == "long" and bar.close < bar.open) or \
-                       (self._side == "short" and bar.close > bar.open)
-            if opposite:
+            if self.exit_mode == "swing":
+                reversal = self._check_reversal_swing_mode(bar)
+            else:
+                reversal = self._check_reversal_bar_mode(bar)
+            if reversal:
                 self._exit_all(bar.close, bar.end_ts, "reversal")
 
         if self._pos:                    # still in position (didn't just exit)

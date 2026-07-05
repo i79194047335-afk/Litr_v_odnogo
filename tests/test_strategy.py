@@ -335,3 +335,86 @@ def test_session_counters_part2_only_via_direct_fill_handling():
     assert s.n_sessions_both == 0
     assert len(s.trades) == 1
     assert s.trades[0].tag == "part2"
+
+
+# ---------------------------------------------------------------------------
+# exit_mode="swing" — integration: single break must NOT exit, break+
+# acceptance MUST exit. Contrasted directly against exit_mode="bar".
+# ---------------------------------------------------------------------------
+
+def _swing_bar(h, l, c, o=None):
+    from src.rangebars.builder import RangeBar
+    return RangeBar(open=o if o is not None else c, high=h, low=l, close=c,
+                    start_ts=0, end_ts=0)
+
+
+def _make_swing_stack(exit_mode="swing"):
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
+                   part_size=1.0, exit_mode=exit_mode, swing_confirm_bars=2)
+    s._lines = {"0": 50.0, "q": 90.0, "h": 100.0, "tq": 110.0, "1": 120.0}
+    s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
+                        size=1.0, ts=0, tag="part1"))
+    return r, e, s
+
+
+# swing-formation bars: lows [100,98,95,97,99] -> confirms swing_low=95
+# at bar index 4 (matches test_swings.py's independently-verified case).
+SWING_FORMATION_BARS = [
+    _swing_bar(h=105, l=100, c=102),
+    _swing_bar(h=103, l=98,  c=100),
+    _swing_bar(h=100, l=95,  c=97),
+    _swing_bar(h=102, l=97,  c=99),
+    _swing_bar(h=104, l=99,  c=101),
+]
+
+
+def test_swing_mode_single_break_does_not_exit():
+    r, e, s = _make_swing_stack("swing")
+    for b in SWING_FORMATION_BARS:
+        s.on_range_bar(b)
+    assert s.swings.last_swing_low == 95
+
+    s.on_range_bar(_swing_bar(h=94, l=90, c=91))   # objective break
+    assert s._break_pending is True
+    assert bool(s._pos) is True
+    assert s.trades == []
+
+
+def test_swing_mode_reclaim_after_break_clears_pending_stays_in():
+    r, e, s = _make_swing_stack("swing")
+    for b in SWING_FORMATION_BARS:
+        s.on_range_bar(b)
+    s.on_range_bar(_swing_bar(h=94, l=90, c=91))   # break
+    s.on_range_bar(_swing_bar(h=98, l=93, c=97))   # reclaim -> break failed
+    assert s._break_pending is False
+    assert bool(s._pos) is True
+    assert s.trades == []
+
+
+def test_swing_mode_break_plus_acceptance_exits():
+    r, e, s = _make_swing_stack("swing")
+    for b in SWING_FORMATION_BARS:
+        s.on_range_bar(b)
+    s.on_range_bar(_swing_bar(h=94, l=90, c=91))   # break
+    s.on_range_bar(_swing_bar(h=92, l=88, c=89))   # still below -> accepted
+    assert len(s.trades) == 1
+    assert s.trades[0].exit_reason == "reversal"
+    assert s.trades[0].exit_price == 89
+
+
+def test_bar_mode_still_exits_on_single_opposite_bar_unchanged():
+    # regression guard: default exit_mode="bar" must be untouched by the
+    # swing machinery existing alongside it.
+    r, e, s = _make_swing_stack("bar")
+    for b in SWING_FORMATION_BARS:
+        s.on_range_bar(b)
+    s.on_range_bar(_swing_bar(h=94, l=90, c=91, o=95))  # close(91) < open(95)
+    assert len(s.trades) == 1
+    assert s.trades[0].exit_price == 91
+
+
+def test_swing_tracker_is_none_in_bar_mode():
+    r, e, s = _make_swing_stack("bar")
+    assert s.swings is None

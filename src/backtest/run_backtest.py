@@ -67,6 +67,13 @@ def main() -> None:
     ap.add_argument("--mult-outer", type=float, default=8.0)
     ap.add_argument("--part-size", type=float, default=1.0)
     ap.add_argument("--trailing", action="store_true", default=False)
+    ap.add_argument("--exit-mode", choices=["bar", "swing"], default="bar",
+                    help="part-2 reversal exit rule: 'bar' (Slice 3 default, "
+                         "over-triggers — see strategy.py) or 'swing' "
+                         "(Beggs-faithful break-and-acceptance, recommended)")
+    ap.add_argument("--swing-confirm-bars", type=int, default=2,
+                    help="bars each side required to confirm a swing point "
+                         "(only used with --exit-mode swing; Beggs uses 2)")
     ap.add_argument("--slippage-ticks", type=float, default=0.0)
     ap.add_argument("--tick-size", type=float, default=0.0)
     ap.add_argument("--fill-probability", type=float, default=1.0)
@@ -91,7 +98,9 @@ def main() -> None:
                         rng=random.Random(args.seed) if args.seed is not None else None)
     strategy = WFStrategy(replay, engine, keltner_period=args.keltner_period,
                           mult_inner=args.mult_inner, mult_outer=args.mult_outer,
-                          part_size=args.part_size, trailing=args.trailing)
+                          part_size=args.part_size, trailing=args.trailing,
+                          exit_mode=args.exit_mode,
+                          swing_confirm_bars=args.swing_confirm_bars)
 
     print(f"reading {len(files)} file(s)...")
     replay.run(load_ticks(files), strategy)
