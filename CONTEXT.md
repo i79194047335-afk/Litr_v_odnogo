@@ -2,6 +2,10 @@
 
 > Read this file end-to-end when resuming work in a new chat. For deeper
 > research see `docs/ytc_scalper_skeleton.md` and `docs/kb_mrcvokka_diary.md`.
+> Lance Beggs' original articles (Russian translations) are also available
+> as reference PDFs in Claude's project knowledge — NOT in this git repo.
+> They were the source that corrected the reversal-exit definition (see
+> Work plan item 8 and the 2026-07-05 session log).
 
 ## TL;DR
 
@@ -227,7 +231,7 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
      comment to that effect.
    - ETH/SOL/HYPE/XAU calibration pending: need clean live days first
      (SOL/HYPE/XAU only started live 2026-07-03).
-8. ⏳ **Event-driven backtester** (in progress, slices 1–3 of 5 done):
+8. ✅ **Event-driven backtester** (all 5 slices done, plus a correction):
    - ✅ Slice 1 — replay harness (`src/backtest/replay.py`): one pass
      over ticks builds range bars and 1m candles in parallel, with a hard
      lookahead guarantee (a bar-close handler never sees a 1m candle that
@@ -239,29 +243,52 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
      fill "through, not touch" at the limit price (queue ambiguity → we
      under-fill rather than over-fill); stop orders "touch, trigger" at
      the TICK price (gap slippage is not softened). Asymmetry is
-     deliberate — pessimistic on both entries and stops. Fill-probability
-     haircut deferred to Slice 4 as a visible config knob, not baked in.
-     14 tests.
+     deliberate — pessimistic on both entries and stops. Slice 4 added
+     `slippage_ticks` (stops only) and `fill_probability` (limits only),
+     both defaulting to neutral. 25 tests.
    - ✅ Slice 3 — WF strategy (`src/backtest/strategy.py`): two-condition
      bias with a neutral zone (EMA cross AND close past fast; both EMAs
      must be past warm-up), zone lines off the shared Keltner core
      (mults 4 and 8 give evenly-spaced 0/¼/½/¾/1 automatically), two-part
      limit entries at ½ and ¼, static stop AT the 0-line (frozen at first
-     fill), take-profit at ¾, reversal-bar exit for whatever remains.
-     Per-bar order refresh only while flat. Resting-order guard: an
-     entry limit on the wrong side of last tick is skipped, not placed.
-     13 tests, three fully hand-scripted end-to-end scenarios (take, gap
-     stop, reversal). One of them caught a real bug — see Anti-patterns.
-   - ⏳ Slice 4 (next) — costs (fee_bps, slippage_ticks, funding rate),
-     fill-probability haircut, and trailing measured as a separate
-     experiment against the base system so the diary's ×5 claim earns
-     its own row rather than being silently included.
-   - ⏳ Slice 5 — metrics runner: feed real JSONL through the whole
-     stack, output expectancy in R, win rate, profit factor, max DD,
-     part-2 fill rate. This is the actual "does the mechanical subset
-     have edge on Lighter" answer.
-9. **Metrics**: expectancy in R, win-rate, profit factor, max DD, part-2
-   fill rate, walk-forward, parameter sensitivity.
+     fill), take-profit at ¾. Per-bar order refresh only while flat.
+     Resting-order guard: an entry limit on the wrong side of last tick
+     is skipped, not placed. Slice 4 added optional `trailing` (tighten
+     stop to last closed bar's low/high, never loosens), default off.
+   - ✅ Slice 4 — costs (`src/backtest/costs.py`): maker/taker fees by
+     exit_reason (take=maker, stop/reversal=taker), hourly funding
+     (Lighter settles once/hour to whoever holds a position at the
+     instant — most scalp trades live minutes and never cross a
+     boundary, so funding is ~always 0; mechanism built, rate defaults
+     to 0 pending real funding-rate collection). 19 tests.
+   - ✅ Slice 5 — metrics + runner (`src/backtest/metrics.py`,
+     `run_backtest.py`): the actual CLI that answers "does this have
+     edge". Session outcomes tracked three-way
+     (`n_sessions_part1_only/part2_only/both`) after a binary "part2
+     filled" flag was found to conflate genuine scale-in (13 sessions)
+     with part1 simply never filling (666 sessions) on real BTC data —
+     see session log. **Headline unit is bps of entry price, not
+     R-multiple**: on real data the stop fired 1 time in 2909 trades, so
+     R's denominator (distance to the line-0 stop) is almost never the
+     realized risk and every R number was scaled by a risk that didn't
+     happen. bps divides by entry price instead — stable, undistorted.
+     R is kept alongside for trades where the stop distance genuinely
+     is the risk (the take exits). Also reports stdev/SE/rough t-stat
+     (sanity check, not a formal test — trades aren't independent) and
+     a breakdown by exit_reason and by entry part. 15 tests.
+   - ✅ **Exit-rule correction** (2026-07-05, see session log): Slice 3's
+     part-2 exit ("first opposite bar") was found to be a mistranslation
+     of Beggs — replaced with `exit_mode="swing"`
+     (`src/backtest/swings.py`), a faithful two-stage break-and-acceptance
+     rule against real swing structure (HH/HL, 2-bar confirmation each
+     side, per the source articles). Opt-in — `exit_mode="bar"` (the
+     original) stays the default so every prior result stays
+     reproducible; `"swing"` is recommended for new runs. 18 tests.
+9. ✅ **Metrics**: done as part of Slice 5 above (bps headline, R kept,
+   win-rate, profit factor, max DD in both units, part-2 fill rate
+   corrected to three-way, breakdowns by exit_reason/tag). Walk-forward
+   and parameter sensitivity remain open (see Open questions / On the
+   horizon).
 10. **Only after positive backtest**: paper trading on live WS stream.
 11. **Only after successful paper**: talk about live (not in scope now).
 
@@ -293,6 +320,108 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
   of bug that only shows up on multi-hour runs. Same principle as the
   dedup lesson above: don't clear safety trackers without checking
   which specific instance you're clearing.
+- **Mechanizing a discretionary concept without the source text.**
+  `ytc_scalper_skeleton.md` said "hold part 2 until the first 1-range
+  reversal" — that got coded as "first bar where close < open", which on
+  near-random ticks fires roughly every 2 bars by construction (verified
+  against a fair-coin baseline). Once the actual Beggs articles were
+  read (2026-07-05), his real definition of a reversal is a broken swing
+  structure (HH/HL) CONFIRMED by price accepting the break over a
+  further bar — a single opposite bar is explicitly described as often a
+  reason to re-enter, not exit. Result on real BTC data: 2886 of 2909
+  trades exited via the wrong rule, only 35 ever reached the take
+  target. A paraphrased summary of a discretionary method is not a
+  specification — when a concept is doing real mechanical work (an exit
+  rule, a threshold), go back to the primary source before encoding it,
+  don't extrapolate from a one-line gloss.
+
+## Session log (2026-07-04 – 2026-07-05)
+
+Continuation of the backtester work (Slices 4-5 built, then a real-data
+run exposed two measurement bugs and one strategy-fidelity bug):
+
+- **Slices 4 and 5 built and shipped** — costs/slippage/fill-probability/
+  trailing (Slice 4), metrics + CLI runner (Slice 5). See Work plan item 8
+  for the per-slice detail.
+- **First real BTC backtest run** (4 live days, June 29 – July 2,
+  range_size=15.3): expectancy +0.0211 R, t-stat 6.0 — looked like a
+  significant result at first glance.
+- **Part-2 fill-rate bug found from the real output.** `n_sessions_with_part2`
+  (binary) reported 23.34% — read as "part2 averages in fairly often".
+  Actual breakdown once tracked three-way: 2230 part1-only, 666 part2-only
+  (part1 never filled — price passed its resting-order level before the
+  next bar's refresh could place it), only 13 sessions where BOTH parts
+  genuinely filled. The two-part scale-in Beggs describes essentially
+  never happens at this range_size; "part2 fill rate" was conflating that
+  with an unrelated opportunistic-entry pattern. Fixed: three explicit
+  counters, `scale_in_rate` (both) reported separately from
+  `part2_fill_rate` (any, kept for continuity).
+- **R-multiple denominator bug found from the same output.** `by
+  exit_reason` showed the stop fired ONCE in 2909 trades — 99% of trades
+  exit via the reversal rule, nowhere near the line-0 stop. So R (PnL /
+  distance-to-stop) was dividing almost every trade by a risk distance it
+  never actually incurred, inflating/distorting the apparent effect size.
+  Fixed: bps-of-entry-price is now the headline metric (see Work plan
+  item 8); R kept as a secondary, meaningful only for take exits.
+- **Re-run in bps**: expectancy +0.2925 bps net, t-stat 6.06 (independent
+  confirmation the earlier R-based t-stat wasn't just a units artifact —
+  bps and R scale together for a fixed-risk trade, so a similar t was
+  expected and observed).
+- **`by exit_reason` breakdown read carefully**: take exits (n=35, the ONLY
+  ones reaching the Beggs-intended ¾ target) average +10.21 bps net,
+  100% win rate, and stayed essentially flat (+10.18 to +10.21) across
+  every friction test below. Reversal exits (n=2886, 99% of trades)
+  averaged only +0.18 bps and were NOT robust to friction (see next).
+  35 trades contributed 42% of total bps despite being 1.2% of trades —
+  heavy concentration, a fragility flag on its own.
+- **User pushback, correctly, on "2886 reversal exits in 4 days" sounding
+  like a bug.** Checked the arithmetic: 39,947 bars / 2909 sessions ≈ 1
+  trade per 14 bars — normal entry cadence, not a bug. The real anomaly
+  isn't trade frequency, it's that reversal exits happen almost
+  immediately after entry: a fair-coin baseline predicts ~2 bars to the
+  first opposite bar, matching real behavior. Not a bug — a correct
+  implementation of a rule that turned out to be the wrong rule (see
+  Anti-patterns).
+- **Friction sensitivity sweep.** `slippage_ticks` (stops only) barely
+  moved anything (0.2925 → 0.2922 bps from 6 to 60 ticks) — expected,
+  only 1 trade in the sample is a stop. `fill_probability` (limits only,
+  affects 99%+ of trades) degraded the edge sharply and unevenly:
+  p=1.0 → 0.2925 bps (t=6.06); p=0.7 → 0.1671 (t=3.40); p=0.5 → 0.0869
+  (t=1.70, already "can't rule out noise"); p=0.3 → 0.0333 (t=0.59).
+  Critically, the DEGRADATION WAS CONCENTRATED IN REVERSAL EXITS —
+  their mean bps went from +0.18 at p=1.0 to NEGATIVE (-0.02 to -0.08)
+  at p≤0.5, while take-exit means stayed pinned near +10.2 throughout.
+  This independently pointed at the same weak spot as the Beggs-reading
+  finding below: the reversal-exit population is fragile/artifact-driven,
+  the take-exit population is robust.
+- **Beggs source articles uploaded to the project** (Russian translations,
+  Claude project knowledge, not in the repo) and read directly (not
+  taken from the `ytc_scalper_skeleton.md` paraphrase). Key finding:
+  a swing high/low requires 2 bars of confirmation on EACH side (5-bar
+  window), and a "trend change" has two stages — an "objective" break
+  (price crosses the prior swing point) that on its own is NOT treated as
+  a reversal, and "acceptance" (price stays beyond the break) which is
+  what actually confirms it. Direct quote translated: "don't automatically
+  think that a broken trend means a trend change... price's refusal to
+  hold a trend change is often a good signal to enter in the direction
+  of the original trend." This directly explains both the fragility
+  found in the friction sweep and the earlier over-triggering.
+- **Exit-rule correction implemented**: `src/backtest/swings.py`
+  (`SwingTracker` + `check_break_and_acceptance`, both pure/hand-tested)
+  plus `WFStrategy(exit_mode="swing")`. Old behavior (`exit_mode="bar"`)
+  kept as the default so all prior results and tests stay reproducible;
+  not recommended for new runs. Not yet re-tested against real data —
+  first thing to do next session.
+- **Self-correction on process**: mid-session, a `metrics.py` with a
+  further bps/StatBlock rework appeared in the assistant's working
+  environment that didn't match the deployed repo. Initially
+  (incorrectly) flagged as possible external drift (DeepSeek or the
+  user); cloning the actual repo showed the deployed file was clean at
+  the correct commit and the extra code was the assistant's own
+  lost-track-of scratch work, not drift from anyone else. Recorded
+  because the instinct to check was right; the accusation aimed at the
+  wrong source was not — check your own recent actions before
+  suspecting the environment.
 
 ## Session log (2026-07-02)
 
@@ -399,9 +528,13 @@ src/
                keltner.py              ✅ shared core, mult 4 & 8
                stochastic.py           ✅ slow 3/2/3
   backtest/    replay.py               ✅ slice 1: harness, dual series
-               orders.py               ✅ slice 2: fill engine
-               strategy.py             ✅ slice 3: WF strategy
-                                       ⏳ slice 4 (costs+trailing) next
+               orders.py               ✅ slice 2: fill engine + slippage/fill-prob
+               strategy.py             ✅ slice 3+4: WF strategy + trailing +
+                                          exit_mode ("bar" default / "swing" fix)
+               swings.py               ✅ swing HH/HL + break-acceptance (2026-07-05)
+               costs.py                ✅ slice 4: fees + funding
+               metrics.py              ✅ slice 5: bps/R stats, breakdowns
+               run_backtest.py         ✅ slice 5: CLI runner, ties it all together
 data/ticks/    JSONL, mixed v1 (legacy) and v2 (post-2026-07-02)
 docs/
   ytc_scalper_skeleton.md              strategic breakdown of Beggs
@@ -415,8 +548,12 @@ tests/
   test_indicators_keltner.py           6 tests, passing
   test_indicators_stochastic.py        6 tests, passing
   test_replay.py                       12 tests, passing
-  test_orders.py                       14 tests, passing
-  test_strategy.py                     13 tests, passing
+  test_orders.py                       25 tests, passing
+  test_strategy.py                     30 tests, passing
+  test_costs.py                        19 tests, passing
+  test_metrics.py                      15 tests, passing
+  test_run_backtest.py                 6 tests, passing
+  test_swings.py                       11 tests, passing
 .pre-commit-config.yaml                gitleaks local
 .github/workflows/gitleaks.yml         gitleaks server-side
 config.example.yaml                    reference
