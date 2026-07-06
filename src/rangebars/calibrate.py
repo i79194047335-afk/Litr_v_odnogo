@@ -107,8 +107,14 @@ def calibrate(ranges: list[float], pct: float) -> dict:
 
 # --- IO ---------------------------------------------------------------------
 
-def _iter_price_ts(path: Path) -> Iterator[tuple[float, int]]:
-    """Stream (price, ts_ms) from one JSONL file. Skips blank/bad lines."""
+def iter_price_ts(path: Path) -> Iterator[tuple[float, int]]:
+    """Stream (price, ts_ms) from one JSONL file. Skips blank/bad lines.
+
+    Public (promoted 2026-07-04): Slice 5's backtest runner needs the exact
+    same extraction — a range bar or fill check only cares about (price, ts),
+    same as calibration does. Single source of truth for "how do we read a
+    tick line" rather than two near-identical parsers drifting apart.
+    """
     with path.open() as f:
         for line in f:
             line = line.strip()
@@ -163,7 +169,7 @@ def main() -> None:
         if not f.exists():
             print(f"  WARNING: not found, skipping: {f}", file=sys.stderr)
             continue
-        all_ranges.extend(one_minute_ranges(_iter_price_ts(f)))
+        all_ranges.extend(one_minute_ranges(iter_price_ts(f)))
 
     stats = calibrate(all_ranges, args.pct)
 
