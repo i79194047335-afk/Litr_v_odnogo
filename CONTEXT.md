@@ -6,6 +6,15 @@
 > as reference PDFs in Claude's project knowledge — NOT in this git repo.
 > They were the source that corrected the reversal-exit definition (see
 > Work plan item 8 and the 2026-07-05 session log).
+>
+> Before trusting any "done" claim in here (including this file's own test
+> counts), re-clone the repo and run `pytest` yourself. This file has
+> drifted from the real pushed state twice already (see the 2026-07-06
+> session log) — once from a rename sitting uncommitted, once from an
+> entire bugfix (reversal-exit-via-FillEngine) sitting uncommitted on the
+> VPS while a session summary reported it as done and pushed. Both times
+> the only thing that caught it was a fresh clone + test run, not reading
+> this file or a chat summary.
 
 ## TL;DR
 
@@ -283,7 +292,41 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
      rule against real swing structure (HH/HL, 2-bar confirmation each
      side, per the source articles). Opt-in — `exit_mode="bar"` (the
      original) stays the default so every prior result stays
-     reproducible; `"swing"` is recommended for new runs. 18 tests.
+     reproducible; `"swing"` is recommended for new runs. `swings.py` has
+     11 tests of its own.
+   - ✅ **R-freeze fix** (2026-07-06, see session log): `swing` +
+     `trailing` together produced an absurd R-multiple
+     (−56,495,836) because the risk denominator was read from the
+     CURRENT (trailing-moved) stop instead of the stop at entry — as
+     trailing dragged the stop toward price, risk went to ~0 and R blew
+     up. bps was unaffected (different denominator), which is how this
+     hid until someone actually ran `trailing=True`. Fixed:
+     `risk_at_entry` is now frozen per-part at fill time and read by
+     `_record` instead of the live stop price. Two regression tests.
+   - ✅ **Reversal-exit-via-FillEngine fix** (2026-07-06, see session
+     log): reversal exits (either `exit_mode`) used to call `_exit_all`
+     directly at the bar's own closing tick — zero latency, zero
+     slippage, invisible to `fill_probability`, and adverse exactly when
+     it mattered, since a reversal fires when price is already moving
+     against you. This was ~99% of exits in every measured run. Fixed:
+     the decision to exit now places a stop order at a deliberately
+     extreme sentinel trigger price (`_MARKET_SELL_TRIGGER` /
+     `_MARKET_BUY_TRIGGER` — a "market order via stop" modeling trick,
+     not a new order type) through the same FillEngine every other exit
+     uses, guaranteed to fire on the very next tick with slippage
+     applied but NOT `fill_probability` (correctly — that model is for
+     resting-limit queue ambiguity, not an aggressive next-tick fill).
+     Re-evaluating the reversal condition or trailing is skipped while
+     an exit is pending. `strategy.py`'s test file now has 36 tests
+     total (7 added/updated for this fix and the R-freeze fix combined).
+     **Caught a real process failure landing this**: a find-replace
+     patch script silently reported success on a 0-match edit and left
+     `strategy.py` unchanged; recovered via full-file overwrite verified
+     byte-for-byte against a passing sandbox copy. Then the finished,
+     locally-passing (167/167) fix sat uncommitted on the VPS into the
+     next session — caught only because the new session re-cloned the
+     repo and ran `pytest` before touching anything, got 163, and
+     traced the gap to `git status` on the VPS. See session log.
 9. ✅ **Metrics**: done as part of Slice 5 above (bps headline, R kept,
    win-rate, profit factor, max DD in both units, part-2 fill rate
    corrected to three-way, breakdowns by exit_reason/tag). Walk-forward
@@ -334,6 +377,67 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
   specification — when a concept is doing real mechanical work (an exit
   rule, a threshold), go back to the primary source before encoding it,
   don't extrapolate from a one-line gloss.
+- **A patch script that reports success unconditionally is worse than one
+  that fails loudly.** 2026-07-06: a find-replace script printed "EDIT N
+  FAILED: found 0 matches" for a mismatch but kept going anyway, wrote
+  the file unchanged, and then printed an unconditional success message.
+  `strategy.py`'s edits never landed; the tool's own output said they
+  had. An earlier script in the same session correctly used
+  `raise SystemExit(1)` on failure — that's the standard every patch
+  script needs, not just the production code. Recovery: full-file
+  overwrites verified byte-for-byte against a passing sandbox copy, plus
+  an explicit "grep for the new symbol, tell me the count" step after
+  every paste.
+- **"GitHub is the source of truth" needs a fresh-clone check, not just a
+  push, and this has now bitten twice.** 2026-07-03/04:
+  `iter_price_ts`'s rename and a new test file sat committed-nowhere on
+  the VPS while `run_backtest.py` was actually unimportable from a clean
+  clone. 2026-07-06, same failure mode, bigger stakes: the entire
+  reversal-exit-via-FillEngine fix (167/167 passing locally) sat
+  uncommitted on the VPS across a session boundary, while the outgoing
+  session's own summary reported it as "done and pushed." Caught only
+  because the next session re-cloned and ran `pytest` before trusting
+  either the summary or this file — got 163, not 167, and traced it to
+  `git status` on the VPS. **Standing rule going forward: start every
+  new session with a fresh `git clone` + `pytest` run, before reading
+  any chat summary or acting on this file's own "done" claims.**
+
+## Session log (2026-07-06)
+
+Short session, high-value catch: verified the previous session's
+handoff summary against the actual pushed repo before acting on it, per
+the "GitHub is source of truth" principle this file already preached —
+turned out the principle itself had been violated.
+
+- **Fresh-clone check on session start.** Cloned
+  `i79194047335-afk/Litr_v_odnogo` and ran `pytest` before touching
+  anything. Got **163 passing**, not the 167 the incoming session
+  summary claimed. `grep` for `_MARKET_SELL_TRIGGER` /
+  `_reversal_exit_id` in `strategy.py` came back empty — the
+  reversal-exit-via-FillEngine fix described as "done and pushed" was
+  simply not in the repo. `git log --all` and `git show-ref` confirmed
+  no other branch had it either.
+- **Root cause, found via VPS `git status`**: the fix was real and had
+  been reached (167/167 locally) — it was just never `git add`/
+  committed/pushed. Same failure mode as the 2026-07-03/04
+  `iter_price_ts` drift, this time on the actual strategy-logic fix
+  rather than a rename.
+- **Recovery**: `git add` the two modified files (`strategy.py`,
+  `test_strategy.py`), confirm nothing else was staged, `pytest` once
+  more locally (167), commit
+  (`backtest: route reversal exits through FillEngine (was bypassing
+  fill/slippage)`, `280273b`), push, then independently re-verified with
+  a **second** fresh clone from this side: 167/167 passing, sentinel
+  trigger + guard code present in `strategy.py`. Ground truth confirmed
+  from both directions before writing anything here.
+- **This CONTEXT.md update** brings the file in line with that verified
+  state — R-freeze fix and reversal-exit-via-FillEngine fix both now
+  documented (Work plan item 8), plus the two anti-patterns above.
+- **Not done this session** (deferred, see Open questions / next
+  steps): trailing redesign, re-run of swing-mode + redesigned trailing
+  on the same 4 BTC days, writing the pass/fail criterion before that
+  re-run, the out-of-sample split, the EMA-bias audit against Beggs,
+  `config.example.yaml` drift, mean-holding-time instrumentation.
 
 ## Session log (2026-07-04 – 2026-07-05)
 
@@ -514,52 +618,92 @@ Key events from the current chat, most recent first:
 4. **Cosmetic**: `RuntimeError: Event loop stopped before Future completed`
    at systemd stop. Not a data loss, just noisy in logs. Not fixed yet.
 
+## Next steps (priority order)
+
+As of the 2026-07-06 session, once CONTEXT.md itself is caught up:
+
+1. **Trailing redesign.** Raw "trail to last bar's low/high" is too tight
+   — a real run showed 95% of trades exiting via stop once trailing was
+   on, up from near-zero without it; ordinary noise clips it almost
+   immediately. Two options on the table: swing-based trail (reuse
+   `SwingTracker`, trail to the last *confirmed* swing low/high instead
+   of every bar's raw extreme — consistent with the just-fixed exit
+   rule) vs. a buffered/fixed-distance trail. Not yet decided or built.
+2. **Re-run `exit_mode="swing"` + redesigned trailing** on the same 4
+   real BTC days (June 29 – July 2, range_size=15.3) once #1 is built.
+   This will be the first headline number where none of the three known
+   measurement distortions (R-freeze, reversal-exit friction, raw
+   trailing) are still in the way.
+3. **Write the pass/fail criterion in writing before that re-run**, not
+   after. What bps, what t-stat, what robustness across
+   `fill_probability`/`slippage_ticks` counts as "worth moving toward
+   paper trading" is a risk-tolerance call for the user to make, not a
+   technical one for Claude/DeepSeek to infer from the numbers after the
+   fact.
+4. **Out-of-sample split.** `range_size=15.3` was calibrated on the SAME
+   4 days used for every backtest run so far. No result should be
+   trusted until tested on days it wasn't tuned on. Entirely
+   unaddressed.
+5. **Audit the EMA-bias mechanization against the Beggs source**, the
+   same way the reversal rule was audited — consistency demands it,
+   since the reversal rule turned out to be a mistranslation of a
+   one-line gloss and the bias rule came from the same kind of gloss.
+6. **Lower priority**: fix `config.example.yaml` drift (`market_ids:
+   [0,1]` vs. the live 5-market set; BTC placeholder 5.00 vs. calibrated
+   15.3); add mean-holding-time instrumentation to metrics (needed to
+   check, not just assume, whether swing-mode's longer holds make the
+   funding=0 assumption stop being safe); collect real funding-rate
+   history if that instrumentation says it matters.
+
 ## Repo structure
 
-```
-src/
-  collector/   lighter_ticks.py        ✅ v2 schema, dedup by tid, snapshot skip
-               list_markets.py         ✅ helper
-               oxarchive_backfill.py   ✅ historical backfill + SDK bugfix
-               compare_sources.py      ✅ cross-source cross-check
-  rangebars/   builder.py              ✅ + tests
-               calibrate.py            ✅ 30% of mean 1m range + tests
-  indicators/  ema.py                  ✅ streaming, seed from first price
-               keltner.py              ✅ shared core, mult 4 & 8
-               stochastic.py           ✅ slow 3/2/3
-  backtest/    replay.py               ✅ slice 1: harness, dual series
-               orders.py               ✅ slice 2: fill engine + slippage/fill-prob
-               strategy.py             ✅ slice 3+4: WF strategy + trailing +
-                                          exit_mode ("bar" default / "swing" fix)
-               swings.py               ✅ swing HH/HL + break-acceptance (2026-07-05)
-               costs.py                ✅ slice 4: fees + funding
-               metrics.py              ✅ slice 5: bps/R stats, breakdowns
-               run_backtest.py         ✅ slice 5: CLI runner, ties it all together
+src/ collector/   lighter_ticks.py        ✅ v2 schema, dedup by tid, snapshot skip
+list_markets.py         ✅ helper
+oxarchive_backfill.py   ✅ historical backfill + SDK bugfix
+compare_sources.py      ✅ cross-source cross-check
+rangebars/   builder.py              ✅ + tests
+calibrate.py            ✅ 30% of mean 1m range + tests
+indicators/  ema.py                  ✅ streaming, seed from first price
+keltner.py              ✅ shared core, mult 4 & 8
+stochastic.py           ✅ slow 3/2/3
+backtest/    replay.py               ✅ slice 1: harness, dual series
+orders.py               ✅ slice 2: fill engine + slippage/fill-prob
+strategy.py             ✅ slice 3+4: WF strategy + trailing +
+exit_mode ("bar" default / "swing" fix) +
+R-freeze fix + reversal-via-FillEngine (2026-07-06)
+swings.py               ✅ swing HH/HL + break-acceptance (2026-07-05)
+costs.py                ✅ slice 4: fees + funding
+metrics.py              ✅ slice 5: bps/R stats, breakdowns
+run_backtest.py         ✅ slice 5: CLI runner, ties it all together
 data/ticks/    JSONL, mixed v1 (legacy) and v2 (post-2026-07-02)
 docs/
-  ytc_scalper_skeleton.md              strategic breakdown of Beggs
-  kb_mrcvokka_diary.md                 full research, 19 pages, forum diary
+ytc_scalper_skeleton.md              strategic breakdown of Beggs
+kb_mrcvokka_diary.md                 full research, 19 pages, forum diary
 scripts/lighter-ticks.service          template (real unit in /etc/systemd/system/)
 tests/
-  test_rangebars.py                    2 tests, passing
-  test_collector.py                    14 tests, passing
-  test_calibrate.py                    10 tests, passing
-  test_indicators_ema.py               6 tests, passing
-  test_indicators_keltner.py           6 tests, passing
-  test_indicators_stochastic.py        6 tests, passing
-  test_replay.py                       12 tests, passing
-  test_orders.py                       25 tests, passing
-  test_strategy.py                     30 tests, passing
-  test_costs.py                        19 tests, passing
-  test_metrics.py                      15 tests, passing
-  test_run_backtest.py                 6 tests, passing
-  test_swings.py                       11 tests, passing
+test_rangebars.py                    2 tests, passing
+test_collector.py                    14 tests, passing
+test_calibrate.py                    10 tests, passing
+test_indicators_ema.py               6 tests, passing
+test_indicators_keltner.py           6 tests, passing
+test_indicators_stochastic.py        6 tests, passing
+test_replay.py                       12 tests, passing
+test_orders.py                       25 tests, passing
+test_strategy.py                     36 tests, passing (was 30; +6 for
+the R-freeze + reversal-via-
+FillEngine fixes, 2026-07-06)
+test_costs.py                        19 tests, passing
+test_metrics.py                      14 tests, passing (was misreported
+as 15; corrected against actual
+pytest output, 2026-07-06)
+test_run_backtest.py                 6 tests, passing
+test_swings.py                       11 tests, passing
+-- total: 167, verified via fresh clone + pytest, 2026-07-06 --
 .pre-commit-config.yaml                gitleaks local
 .github/workflows/gitleaks.yml         gitleaks server-side
 config.example.yaml                    reference
 config.yaml                            local, not in git
 CONTEXT.md                             this file
-```
 
 ## Command memo
 
