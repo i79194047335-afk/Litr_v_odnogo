@@ -36,7 +36,7 @@ import pytest
 
 from src.backtest.replay import Replay
 from src.backtest.orders import FillEngine, Fill
-from src.backtest.strategy import WFStrategy, compute_bias, zone_lines, trail_stop
+from src.backtest.strategy import WFStrategy, compute_bias, zone_lines, trail_stop, trail_stop_swing
 
 
 # ---------------------------------------------------------------------------
@@ -253,32 +253,21 @@ def test_trailing_off_by_default_regression_guard():
 
 
 def test_trailing_wiring_integration():
-    # Ground truth for the bars this tick sequence produces comes from
-    # Slice 1's already-tested RangeBarBuilder (independently re-derived,
-    # not read from this strategy): tick 106.0 closes ONE bar
-    # (o=105.0,h=105.4,l=104.4,c=105.4); tick 107.4 then closes TWO bars
-    # (o=105.4,h=106.4,l=105.4,c=106.4) and (o=106.4,h=107.4,l=106.4,c=107.4).
-    # Applying trail_stop (the function under test) by hand to each bar's
-    # low in sequence, starting from the static stop 98.5 (line 0 with
-    # mult_outer=6):
-    #   bar(l=104.4): max(98.5, 104.4)  = 104.4
-    #   bar(l=105.4): max(104.4, 105.4) = 105.4
-    #   bar(l=106.4): max(105.4, 106.4) = 106.4
-    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
-    e = FillEngine()
-    s = WFStrategy(r, e, keltner_period=2, mult_inner=3.0, mult_outer=6.0,
-                   part_size=1.0, trailing=True)
-    r.run(WARMUP, s)
-    r.run([(104.4, 200_000)], s)
-
-    r.run([(106.0, 210_000)], s)
+    # Swing-based trailing (replaced bar-based, 2026-07-06).
+    # Confirm a swing low and verify the stop tightens to IT, not to
+    # any raw bar low. Uses the same swing-formation bars as the
+    # swing-mode tests — lows [100, 98, 95, 97, 99]:
+    #   bar index 2 has low=95, lower than its 4 neighbours
+    #   (100, 98, 97, 99) → SwingTracker confirms swing_low=95.
+    # Starting stop = 50.0 (line 0). After 5 bars confirm swing_low=95:
+    #   trail_stop_swing("long", 50.0, swings) → max(50.0, 95.0) = 95.0
+    # The stop must be 95.0, NOT any bar's raw low (97, 98, 99, 100).
+    r, e, s = _make_swing_stack("swing", trailing=True)
+    for b in SWING_FORMATION_BARS:
+        s.on_range_bar(b)
+    assert s.swings.last_swing_low == 95
     stop = next(o for o in e.open_orders if o.tag == "stop")
-    assert math.isclose(stop.price, 104.4, rel_tol=1e-9)
-
-    r.run([(107.4, 220_000)], s)
-    stop = next(o for o in e.open_orders if o.tag == "stop")
-    assert math.isclose(stop.price, 106.4, rel_tol=1e-9)
-
+    assert math.isclose(stop.price, 95.0, rel_tol=1e-9)
     assert s.trades == []          # nothing exited — still in position
 
 
@@ -357,11 +346,12 @@ def _swing_bar(h, l, c, o=None):
                     start_ts=0, end_ts=0)
 
 
-def _make_swing_stack(exit_mode="swing"):
+def _make_swing_stack(exit_mode="swing", trailing=False):
     r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
     e = FillEngine()
     s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
-                   part_size=1.0, exit_mode=exit_mode, swing_confirm_bars=2)
+                   part_size=1.0, exit_mode=exit_mode, swing_confirm_bars=2,
+                   trailing=trailing)
     s._lines = {"0": 50.0, "q": 90.0, "h": 100.0, "tq": 110.0, "1": 120.0}
     s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
                         size=1.0, ts=0, tag="part1"))
@@ -461,7 +451,7 @@ def test_r_multiple_frozen_at_entry_not_trailed_stop():
     r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
     e = FillEngine()
     s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
-                   part_size=1.0, trailing=True)
+                   part_size=1.0, trailing=True, exit_mode="swing")
     s._lines = {"0": 90.0, "q": 95.0, "h": 100.0, "tq": 110.0, "1": 120.0}
     s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
                         size=1.0, ts=0, tag="part1"))
@@ -483,7 +473,7 @@ def test_r_multiple_frozen_survives_full_trailing_run():
     r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
     e = FillEngine()
     s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
-                   part_size=1.0, trailing=True)
+                   part_size=1.0, trailing=True, exit_mode="swing")
     s._lines = {"0": 90.0, "q": 95.0, "h": 100.0, "tq": 110.0, "1": 120.0}
     s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
                         size=1.0, ts=0, tag="part1"))
@@ -581,3 +571,68 @@ def test_second_bar_closing_same_tick_does_not_reevaluate_pending_reversal():
     s.on_range_bar(_swing_bar(h=93, l=89, c=90, o=92))
     assert s._reversal_exit_id == pending_id_after_first   # unchanged, not replaced
     assert s.trades == []                                  # still just pending
+
+
+# ---------------------------------------------------------------------------
+# trailing=True requires exit_mode="swing" (2026-07-06 redesign)
+# ---------------------------------------------------------------------------
+
+def test_trailing_requires_swing_exit_mode():
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    with pytest.raises(ValueError):
+        WFStrategy(r, e, trailing=True, exit_mode="bar")
+
+
+def test_trailing_with_swing_exit_mode_constructs():
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    s = WFStrategy(r, e, trailing=True, exit_mode="swing")
+    assert s.trailing is True
+    assert s.exit_mode == "swing"
+    assert s.swings is not None
+
+
+# ---------------------------------------------------------------------------
+# trail_stop_swing — unit tests
+# ---------------------------------------------------------------------------
+
+def test_trail_stop_swing_no_swing_noop():
+    from src.backtest.swings import SwingTracker
+    st = SwingTracker(confirm_bars=2)
+    assert st.last_swing_low is None
+    assert st.last_swing_high is None
+    assert trail_stop_swing("long", 100.0, st) == 100.0
+    assert trail_stop_swing("short", 200.0, st) == 200.0
+
+
+def test_trail_stop_swing_long_tightens():
+    from src.backtest.swings import SwingTracker
+    st = SwingTracker(confirm_bars=2)
+    st.last_swing_low = 105.0
+    # 105.0 > 100.0 → stop tightens UP to swing low
+    assert trail_stop_swing("long", 100.0, st) == 105.0
+
+
+def test_trail_stop_swing_long_never_loosens():
+    from src.backtest.swings import SwingTracker
+    st = SwingTracker(confirm_bars=2)
+    st.last_swing_low = 95.0
+    # 95.0 < 100.0 → tighter already, must NOT loosen
+    assert trail_stop_swing("long", 100.0, st) == 100.0
+
+
+def test_trail_stop_swing_short_tightens():
+    from src.backtest.swings import SwingTracker
+    st = SwingTracker(confirm_bars=2)
+    st.last_swing_high = 90.0
+    # 90.0 < 100.0 → stop tightens DOWN to swing high
+    assert trail_stop_swing("short", 100.0, st) == 90.0
+
+
+def test_trail_stop_swing_short_never_loosens():
+    from src.backtest.swings import SwingTracker
+    st = SwingTracker(confirm_bars=2)
+    st.last_swing_high = 110.0
+    # 110.0 > 100.0 → tighter already, must NOT loosen
+    assert trail_stop_swing("short", 100.0, st) == 100.0
