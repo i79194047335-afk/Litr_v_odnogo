@@ -71,6 +71,25 @@ the Slice-2 fill engine (orders.py). Decisions fixed in review before coding:
       if a gap tick fills an entry and the stop simultaneously, the stop
       wins and everything is out at the gapped price (gap honesty).
 
+      REVERSAL EXECUTION, corrected 2026-07-06 (was: recorded at bar.close
+      the instant the signal fired — zero latency, zero slippage, invisible
+      to fill_probability, and adverse exactly when it mattered, since a
+      reversal fires when price is already moving against you). Now: the
+      moment either exit_mode decides to exit, the strategy places a stop
+      order at a deliberately extreme trigger price (a modeling trick, not
+      a new order kind — see _MARKET_SELL_TRIGGER/_MARKET_BUY_TRIGGER)
+      through the SAME FillEngine every other exit uses. That order is
+      mathematically guaranteed to fire on the very next tick regardless of
+      price, so the trade is recorded one tick later, at whatever that tick
+      actually prints — including any configured slippage_ticks (this path
+      reuses the stop-fill code, so slippage applies automatically). It
+      does NOT get fill_probability, correctly: that model is for queue
+      ambiguity on a RESTING limit order, not for an order that aggressively
+      takes the next tick. While this exit is pending (one tick, always),
+      re-evaluating the reversal condition and trailing are both skipped —
+      the decision to exit has already been made; only the execution is
+      waiting on the clock.
+
   ORDER REFRESH (per range-bar close, only while flat):
       bias set   -> cancel old entry limits, re-place at the fresh lines
       bias None  -> cancel entry limits, stay out
@@ -97,6 +116,14 @@ from src.backtest.swings import SwingTracker, check_break_and_acceptance
 from src.indicators.keltner import KeltnerCore
 
 Bias = Literal["bull", "bear"]
+
+# Sentinel trigger prices for "market order via stop" (see _place_reversal_exit).
+# Not real price levels — chosen so the very next tick, whatever it is,
+# always satisfies the stop's touch condition. 1e-9 stays > 0 to pass
+# FillEngine.place()'s validation; 1e15 is comfortably above any real price
+# without risking float('inf') propagating into arithmetic or serialization.
+_MARKET_SELL_TRIGGER = 1e15   # sell stop "at or below" this -> any real price qualifies
+_MARKET_BUY_TRIGGER = 1e-9    # buy stop "at or above" this -> any real price qualifies
 
 
 # --- pure functions (unit-tested directly) -----------------------------------
@@ -191,6 +218,8 @@ class WFStrategy:
         self._entry_ids: dict[str, int] = {}              # tag -> order id
         self._stop_id: int | None = None
         self._take_id: int | None = None
+        self._reversal_exit_id: int | None = None
+        self._reversal_exit_pending = False   # decision made, awaiting next-tick fill
         # open position parts: [{tag, entry_price, entry_ts, size}]
         self._pos: list[dict] = []
         self._side: Literal["long", "short"] | None = None
@@ -256,6 +285,14 @@ class WFStrategy:
         if self._take_id is not None:
             self.e.cancel(self._take_id)
             self._take_id = None
+        if self._reversal_exit_id is not None:
+            # Defensive only: in normal operation this order has ALREADY
+            # fired by the time _flat_reset runs (that fill is what
+            # triggered this reset) so there is nothing left to cancel.
+            # Kept for symmetry with the other two trackers and to stay
+            # safe if that ever stops being true.
+            self.e.cancel(self._reversal_exit_id)
+            self._reversal_exit_id = None
 
     def _flat_reset(self) -> None:
         if self._side is not None:      # a session was genuinely open
@@ -274,6 +311,7 @@ class WFStrategy:
         self._side = None
         self._stop_price = None
         self._break_pending = False
+        self._reversal_exit_pending = False
         self._part1_joined = False
         self._part2_joined = False
 
@@ -341,6 +379,16 @@ class WFStrategy:
                 self._stop_id = None
             self._exit_all(f.price, f.ts, "stop")
 
+        elif f.tag == "reversal_exit":
+            # This order was engineered to fire unconditionally on the tick
+            # right after the exit decision (see _place_reversal_exit) — f.price
+            # is a REAL next-tick price (with slippage applied if configured),
+            # not the bar-close price the decision was made on.
+            if f.order_id == self._reversal_exit_id:
+                self._reversal_exit_id = None
+            self._reversal_exit_pending = False
+            self._exit_all(f.price, f.ts, "reversal")
+
         elif f.tag == "take":
             self._take_id = None
             part1 = next((p for p in self._pos if p["tag"] == "part1"), None)
@@ -351,6 +399,20 @@ class WFStrategy:
                 self._flat_reset()
             else:
                 self._replace_stop()   # resize to remaining part2
+
+    def _place_reversal_exit(self) -> None:
+        """Convert an exit DECISION (either exit_mode said "get out now")
+        into an order that fills on the next real tick — see the module
+        docstring's "REVERSAL EXECUTION" section for why this replaces
+        recording the exit at bar.close directly."""
+        total = sum(p["size"] for p in self._pos)
+        if self._side == "long":
+            side, trigger = "sell", _MARKET_SELL_TRIGGER
+        else:
+            side, trigger = "buy", _MARKET_BUY_TRIGGER
+        self._reversal_exit_id = self.e.place(
+            side, "stop", trigger, total, tag="reversal_exit").id
+        self._reversal_exit_pending = True
 
     def _maybe_trail(self, bar) -> None:
         """No-op unless trailing is on and we're in a position — a
@@ -414,16 +476,23 @@ class WFStrategy:
         if self.swings is not None:
             self.swings.update(bar)     # tracks continuously, position or not
 
-        if self._pos:
+        # Skip re-evaluating the reversal condition while an exit decision
+        # is already pending its next-tick fill (see _place_reversal_exit).
+        # Needed because a single tick can close MULTIPLE range bars (the
+        # builder's while-loop) -> on_range_bar can run twice before the
+        # next real tick arrives to resolve the first decision. Re-running
+        # swing mode's break/acceptance state machine on a bar that no
+        # longer matters would corrupt _break_pending for no reason.
+        if self._pos and not self._reversal_exit_pending:
             if self.exit_mode == "swing":
                 reversal = self._check_reversal_swing_mode(bar)
             else:
                 reversal = self._check_reversal_bar_mode(bar)
             if reversal:
-                self._exit_all(bar.close, bar.end_ts, "reversal")
+                self._place_reversal_exit()
 
-        if self._pos:                    # still in position (didn't just exit)
-            self._maybe_trail(bar)
+        if self._pos and not self._reversal_exit_pending:
+            self._maybe_trail(bar)       # pointless to trail a position that's exiting
 
         if not self._pos:
             self._refresh_entries()

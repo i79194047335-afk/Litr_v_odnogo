@@ -184,24 +184,33 @@ def test_scenario_gap_through_stop_flattens_everything():
 def test_scenario_reversal_bar_exits_remaining():
     # (104.05, 210_000): fills nothing (above part2 103.5, above stop 102.5).
     # Closes bar6 DOWN: o105 h105.1 l104.1 c104.1 (down, since 104.05 dragged
-    # range to 1.05 and close<open). Long position + down bar -> reversal:
-    # part1 exits at bar.close=104.1: r = (104.1-104.5)/2 = -0.2.
-    # Cleanup cancels part2 entry, stop, take. Refresh with last price
-    # 104.05: h=104.55 NOT resting (above price), q=103.55 resting ->
-    # ONLY part2 re-placed.
+    # range to 1.05 and close<open). Long position + down bar -> reversal
+    # DECISION fires here, but execution is now deferred one tick (2026-07-06
+    # fix: reversal exits go through the fill engine like every other exit,
+    # so no trade is recorded yet and everything stays resting).
     r, e, s = make_stack()
     r.run(WARMUP + [(104.4, 200_000), (104.05, 210_000)], s)
+    assert s.trades == []
+    assert s._reversal_exit_pending is True
+
+    # Next tick (104.0, 220_000): the deferred exit is engineered to fire
+    # UNCONDITIONALLY on this tick, at ITS real price — not bar.close (104.1).
+    # r = (104.0 - 104.5) / risk(2.0) = -0.25, not the old bar-close -0.2.
+    r.run([(104.0, 220_000)], s)
 
     assert len(s.trades) == 1
     t = s.trades[0]
     assert t.exit_reason == "reversal"
-    assert math.isclose(t.exit_price, 104.1, rel_tol=1e-9)
-    assert t.exit_ts == 210_000
-    assert math.isclose(t.r_multiple, -0.2, rel_tol=1e-9)
+    assert math.isclose(t.exit_price, 104.0, rel_tol=1e-9)
+    assert t.exit_ts == 220_000
+    assert math.isclose(t.r_multiple, -0.25, rel_tol=1e-9)
 
-    orders = {o.tag: o for o in e.open_orders}
-    assert set(orders) == {"part2"}
-    assert math.isclose(orders["part2"].price, 103.55, rel_tol=1e-9)
+    # Cleanup cancelled everything (part2 entry, stop, take, the reversal
+    # exit order itself). Re-entry hasn't happened yet either — refresh_entries
+    # only runs from on_range_bar's tail, and no NEW bar has closed since the
+    # fill (it happened via on_tick) — so an empty book here is correct, not
+    # a gap: the strategy simply hasn't had a bar-close to re-evaluate on yet.
+    assert e.open_orders == []
 
 
 # ---------------------------------------------------------------------------
@@ -394,25 +403,43 @@ def test_swing_mode_reclaim_after_break_clears_pending_stays_in():
 
 
 def test_swing_mode_break_plus_acceptance_exits():
+    # Break + acceptance makes the DECISION to exit (2026-07-06: execution
+    # is deferred to the next real tick, same as bar-mode — see
+    # test_scenario_reversal_bar_exits_remaining for the full rationale).
     r, e, s = _make_swing_stack("swing")
     for b in SWING_FORMATION_BARS:
         s.on_range_bar(b)
     s.on_range_bar(_swing_bar(h=94, l=90, c=91))   # break
-    s.on_range_bar(_swing_bar(h=92, l=88, c=89))   # still below -> accepted
+    s.on_range_bar(_swing_bar(h=92, l=88, c=89))   # still below -> accepted, DECIDED
+    assert s.trades == []
+    assert s._reversal_exit_pending is True
+
+    # next tick fires the deferred exit at ITS price, not the acceptance
+    # bar's close (89): entry=100, stop=50 -> risk=50, r=(85-100)/50=-0.3
+    s.on_tick(85.0, 999)
     assert len(s.trades) == 1
     assert s.trades[0].exit_reason == "reversal"
-    assert s.trades[0].exit_price == 89
+    assert s.trades[0].exit_price == 85.0
+    assert math.isclose(s.trades[0].r_multiple, -0.3, rel_tol=1e-9)
 
 
 def test_bar_mode_still_exits_on_single_opposite_bar_unchanged():
     # regression guard: default exit_mode="bar" must be untouched by the
-    # swing machinery existing alongside it.
+    # swing machinery existing alongside it. The DECISION (single opposite
+    # bar) is still immediate; only EXECUTION is deferred one tick, same as
+    # every other exit_mode after the 2026-07-06 fix.
     r, e, s = _make_swing_stack("bar")
     for b in SWING_FORMATION_BARS:
         s.on_range_bar(b)
     s.on_range_bar(_swing_bar(h=94, l=90, c=91, o=95))  # close(91) < open(95)
+    assert s.trades == []
+    assert s._reversal_exit_pending is True
+
+    # entry=100, stop=50 -> risk=50, r=(87-100)/50=-0.26
+    s.on_tick(87.0, 1000)
     assert len(s.trades) == 1
-    assert s.trades[0].exit_price == 91
+    assert s.trades[0].exit_price == 87.0
+    assert math.isclose(s.trades[0].r_multiple, -0.26, rel_tol=1e-9)
 
 
 def test_swing_tracker_is_none_in_bar_mode():
@@ -465,3 +492,92 @@ def test_r_multiple_frozen_survives_full_trailing_run():
     for t in s.trades:
         assert math.isfinite(t.r_multiple)
         assert abs(t.r_multiple) < 100
+
+
+# ---------------------------------------------------------------------------
+# Reversal-exit-via-fill-engine (2026-07-06 fix): next-tick execution,
+# slippage applies, fill_probability does NOT apply, same-tick dual-fire
+# with the real stop degrades gracefully.
+# ---------------------------------------------------------------------------
+
+def test_reversal_exit_gets_slippage_when_configured():
+    # slippage_ticks=5, tick_size=0.1 -> slip=0.5. Reversal exit reuses the
+    # stop-fill code path, so this must apply automatically, with no
+    # reversal-specific slippage wiring needed.
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine(slippage_ticks=5, tick_size=0.1)
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
+                   part_size=1.0)
+    s._lines = {"0": 50.0, "q": 90.0, "h": 100.0, "tq": 110.0, "1": 120.0}
+    s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
+                        size=1.0, ts=0, tag="part1"))
+    s.on_range_bar(_swing_bar(h=94, l=90, c=91, o=95))
+    s.on_tick(87.0, 1000)
+    assert math.isclose(s.trades[0].exit_price, 86.5, rel_tol=1e-9)  # 87.0 - 0.5
+
+
+def test_reversal_exit_ignores_fill_probability():
+    # A hostile FakeRng that would fail every limit-order roll must NOT
+    # block the reversal exit — it's a stop-kind order, and fill_probability
+    # is deliberately limits-only (queue ambiguity doesn't apply to a market
+    # order aggressively taking the next tick).
+    class HostileRng:
+        def random(self):
+            return 0.999   # always "fails" any fill_probability < 1.0 check
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine(fill_probability=0.5, rng=HostileRng())
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
+                   part_size=1.0)
+    s._lines = {"0": 50.0, "q": 90.0, "h": 100.0, "tq": 110.0, "1": 120.0}
+    s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
+                        size=1.0, ts=0, tag="part1"))
+    s.on_range_bar(_swing_bar(h=94, l=90, c=91, o=95))
+    s.on_tick(87.0, 1000)
+    assert len(s.trades) == 1
+    assert s.trades[0].exit_price == 87.0
+
+
+def test_reversal_exit_and_real_stop_same_tick_no_double_count():
+    # Real stop at 90 AND the deferred reversal exit both qualify on the
+    # SAME next tick (85.0). Exactly one trade must be recorded — the
+    # first-inserted order (the real stop, placed at entry, before the
+    # reversal_exit which is only placed when the decision fires) wins per
+    # FillEngine's insertion-order iteration; the second fill in the same
+    # batch must be a safe no-op, not a duplicate or corrupted record.
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
+                   part_size=1.0)
+    s._lines = {"0": 90.0, "q": 95.0, "h": 100.0, "tq": 110.0, "1": 120.0}
+    s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
+                        size=1.0, ts=0, tag="part1"))
+    s.on_range_bar(_swing_bar(h=94, l=90, c=91, o=95))
+    assert {o.tag for o in e.open_orders} == {"stop", "take", "reversal_exit"}
+
+    s.on_tick(85.0, 1000)   # below the real stop (90) AND fires reversal_exit
+
+    assert len(s.trades) == 1
+    assert s.trades[0].exit_reason == "stop"
+    assert s.trades[0].exit_price == 85.0
+    assert math.isclose(s.trades[0].r_multiple, -1.5, rel_tol=1e-9)  # (85-100)/10
+    assert s.n_sessions == 1              # not double-counted
+    assert e.open_orders == []             # both cleaned up, no orphan
+
+
+def test_second_bar_closing_same_tick_does_not_reevaluate_pending_reversal():
+    # If ONE tick closes two range bars (the builder's while-loop) and the
+    # FIRST bar already triggers the reversal decision, the SECOND bar must
+    # not re-run reversal detection — _reversal_exit_pending must gate it.
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
+                   part_size=1.0)
+    s._lines = {"0": 50.0, "q": 90.0, "h": 100.0, "tq": 110.0, "1": 120.0}
+    s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
+                        size=1.0, ts=0, tag="part1"))
+    s.on_range_bar(_swing_bar(h=94, l=90, c=91, o=95))   # first bar: decision made
+    pending_id_after_first = s._reversal_exit_id
+    # a second bar "closing on the same tick" -- must be a no-op given pending
+    s.on_range_bar(_swing_bar(h=93, l=89, c=90, o=92))
+    assert s._reversal_exit_id == pending_id_after_first   # unchanged, not replaced
+    assert s.trades == []                                  # still just pending
