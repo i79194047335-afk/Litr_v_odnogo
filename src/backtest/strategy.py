@@ -90,6 +90,11 @@ the Slice-2 fill engine (orders.py). Decisions fixed in review before coding:
       the decision to exit has already been made; only the execution is
       waiting on the clock.
 
+      TRAILING REDESIGN, corrected 2026-07-06 (was: trail to raw bar low/high —
+      too tight, 95% of trades exited via stop in a real run; now: trail to
+      last CONFIRMED swing low/high, consistent with exit_mode="swing".
+      trailing=True now requires exit_mode="swing").
+
   ORDER REFRESH (per range-bar close, only while flat):
       bias set   -> cancel old entry limits, re-place at the fresh lines
       bias None  -> cancel entry limits, stay out
@@ -155,6 +160,24 @@ def trail_stop(side: Literal["long", "short"], current_stop: float,
     return min(current_stop, bar_high)
 
 
+def trail_stop_swing(side: Literal["long", "short"], current_stop: float,
+                      swings: "SwingTracker") -> float:
+    """Tighten-only trailing candidate from the latest CONFIRMED swing
+    point (not the raw bar extreme). No-op if the relevant swing hasn't
+    confirmed yet (swings.last_swing_low/high is None) — same
+    tighten-only max/min discipline as trail_stop, so this can never
+    loosen a stop either."""
+    if side == "long":
+        level = swings.last_swing_low
+        if level is None:
+            return current_stop
+        return max(current_stop, level)
+    level = swings.last_swing_high
+    if level is None:
+        return current_stop
+    return min(current_stop, level)
+
+
 def zone_lines(centerline: float, range_sma: float,
                mult_inner: float, mult_outer: float, bias: Bias) -> dict[str, float]:
     """Map the two Keltner channels to the 0/quarter/half/3q/1 lines.
@@ -211,6 +234,8 @@ class WFStrategy:
         self.trailing = trailing
         self.exit_mode = exit_mode
         self.swings = SwingTracker(swing_confirm_bars) if exit_mode == "swing" else None
+        if trailing and exit_mode != "swing":
+            raise ValueError('trailing=True requires exit_mode="swing" — bar-based trailing is no longer supported (see CONTEXT.md anti-patterns)')
         self._break_pending = False
 
         self._last_price: float | None = None
@@ -421,7 +446,7 @@ class WFStrategy:
         comparison below correctly skips a needless cancel/replace)."""
         if not self.trailing or not self._pos:
             return
-        new_stop = trail_stop(self._side, self._stop_price, bar.low, bar.high)
+        new_stop = trail_stop_swing(self._side, self._stop_price, self.swings)
         if new_stop != self._stop_price:
             self._stop_price = new_stop
             self._replace_stop()
