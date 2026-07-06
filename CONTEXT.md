@@ -327,6 +327,28 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
      next session — caught only because the new session re-cloned the
      repo and ran `pytest` before touching anything, got 163, and
      traced the gap to `git status` on the VPS. See session log.
+   - ✅ **Swing-based trailing** (2026-07-06, see session log): raw
+     "trail to last bar's low/high" was too tight — a real run showed
+     95% of trades exiting via stop once trailing was on. Per Beggs'
+     own primary-source management principles (read directly, not
+     paraphrased — see session log), trailing should track "peaks and
+     troughs" (structural swing points), not every bar. Fixed:
+     `trail_stop_swing()` trails to the last CONFIRMED swing low/high
+     from the same `SwingTracker` already used by `exit_mode="swing"`,
+     same tighten-only max/min discipline as the old `trail_stop()`.
+     **`trailing=True` now requires `exit_mode="swing"`** —
+     `WFStrategy.__init__` raises `ValueError` on the old
+     `trailing=True, exit_mode="bar"` combination, since bar-based
+     trailing has no remaining caller and mixing a structural exit rule
+     with a non-structural trail was never coherent. Built via a
+     DeepSeek task file (`DEEPSEEK_TASK.md`, in
+     `feature/swing-trailing`), reviewed line-by-line (diff + a
+     from-scratch hand check that the test's claimed swing_low=95 is
+     correct against `SwingTracker`'s own confirmation rule) before
+     merge — same review standard as Claude's own commits. 7 tests
+     added, `test_trailing_wiring_integration` rewritten for
+     swing-mode. `strategy.py`'s test file: 43 tests (167 → 174
+     project-wide).
 9. ✅ **Metrics**: done as part of Slice 5 above (bps headline, R kept,
    win-rate, profit factor, max DD in both units, part-2 fill rate
    corrected to three-way, breakdowns by exit_reason/tag). Walk-forward
@@ -433,11 +455,68 @@ turned out the principle itself had been violated.
 - **This CONTEXT.md update** brings the file in line with that verified
   state — R-freeze fix and reversal-exit-via-FillEngine fix both now
   documented (Work plan item 8), plus the two anti-patterns above.
-- **Not done this session** (deferred, see Open questions / next
-  steps): trailing redesign, re-run of swing-mode + redesigned trailing
-  on the same 4 BTC days, writing the pass/fail criterion before that
-  re-run, the out-of-sample split, the EMA-bias audit against Beggs,
-  `config.example.yaml` drift, mean-holding-time instrumentation.
+**Continued same day: swing-based trailing.**
+
+- **Beggs' management principles read directly** from the primary-source
+  course (`Курс_Ланса_Бегса_по_Price_Action.pdf`, project knowledge, not
+  in repo), same discipline as the earlier reversal-rule fix. Confirmed:
+  he always trades two parts opened at the SAME price (we scale in at
+  two different limit prices — a known divergence, not changed here);
+  target 1 is the next structural level, target 2 is either a further
+  structural level or "just trail the price"; he explicitly trails to
+  "peaks and troughs" (swing points), not bar-by-bar; he moves to
+  breakeven aggressively and manages the trade actively rather than
+  "set stop and forget". Only the swing-point trailing piece was in
+  scope for this session — breakeven-transfer and the two-parts-same-
+  price divergence are noted as open gaps, not yet acted on.
+- **Also asked**: does mrcvokka's forum diary suggest anything for this?
+  He describes a three-tier multi-timeframe setup — one higher timeframe
+  for trend, and TWO separate lower timeframes, one for precise entry
+  and a DIFFERENT one for position management. Our current design uses
+  the same range-bar series (range_size=15.3) for both entry and
+  management/exit. This is a real architectural question (a second,
+  finer bar series specifically for management) but explicitly deferred
+  — a forum diary is a lower-trust source than Beggs' own writing, and
+  this is a bigger change than "add swing-trailing". Logged as a Next
+  step, not acted on.
+- **Work split to DeepSeek via a task-file workflow**: created
+  `DEEPSEEK_TASK.md` (overwritten per-task, lives in the working branch)
+  instead of re-explaining tasks in chat each time — Ivan points
+  DeepSeek at the file, pastes back the resulting `git log` for review.
+  First use: swing-based trailing spec (forbid `trailing=True` +
+  `exit_mode="bar"`, add `trail_stop_swing()`, wire into `_maybe_trail`,
+  test list). Branch `feature/swing-trailing`.
+- **DeepSeek's implementation reviewed the same way Claude's own code
+  is reviewed**: fresh clone of the branch (not trusting the pasted
+  `git log` alone), full `pytest` run (174/174), full diff read line by
+  line. DeepSeek correctly caught something the brief didn't explicitly
+  ask for: two existing R-freeze regression tests
+  (`test_r_multiple_frozen_*`) used `trailing=True` without
+  `exit_mode="swing"`, which the new `ValueError` guard would now
+  reject — DeepSeek added the missing `exit_mode="swing"` to both
+  rather than leaving them broken. One minor, non-blocking style nit:
+  `SwingTracker` is imported locally inside 4 new test functions instead
+  of once at module top (harmless, not fixed, not worth a re-round-trip).
+- **Independently re-derived the key test's numbers by hand** before
+  approving: `test_trailing_wiring_integration`'s claimed
+  `swing_low=95` was checked against `SwingTracker`'s own confirmation
+  rule (candidate bar lower than the 2 bars before AND after) on the
+  actual 5-bar fixture, not taken on the test author's word.
+- **A process gap surfaced and was named, not silently patched over**:
+  Ivan pushed back correctly when asked to `git push` after a commit —
+  the DeepSeek task file's step 8 said "run pytest before your final
+  commit" but never said "push". Fixed going forward: any task file for
+  DeepSeek (or any agent) needs an explicit push step, not an implied
+  one.
+- **Merged to `main`** (`e4752a4`, no-ff), independently re-verified from
+  a fresh clone: **174/174 passing**.
+- **Not done this session** (deferred, see Next steps): re-run of
+  swing-mode + swing-trailing on the same 4 BTC days, writing the
+  pass/fail criterion before that re-run, breakeven-transfer, the
+  two-parts-same-price divergence from Beggs, the second-timeframe
+  management-tier idea from mrcvokka's diary, the out-of-sample split,
+  the EMA-bias audit against Beggs, `config.example.yaml` drift,
+  mean-holding-time instrumentation.
 
 ## Session log (2026-07-04 – 2026-07-05)
 
@@ -620,20 +699,16 @@ Key events from the current chat, most recent first:
 
 ## Next steps (priority order)
 
-As of the 2026-07-06 session, once CONTEXT.md itself is caught up:
+As of the 2026-07-06 session (trailing redesign now done):
 
-1. **Trailing redesign.** Raw "trail to last bar's low/high" is too tight
-   — a real run showed 95% of trades exiting via stop once trailing was
-   on, up from near-zero without it; ordinary noise clips it almost
-   immediately. Two options on the table: swing-based trail (reuse
-   `SwingTracker`, trail to the last *confirmed* swing low/high instead
-   of every bar's raw extreme — consistent with the just-fixed exit
-   rule) vs. a buffered/fixed-distance trail. Not yet decided or built.
-2. **Re-run `exit_mode="swing"` + redesigned trailing** on the same 4
-   real BTC days (June 29 – July 2, range_size=15.3) once #1 is built.
-   This will be the first headline number where none of the three known
-   measurement distortions (R-freeze, reversal-exit friction, raw
-   trailing) are still in the way.
+1. ~~Trailing redesign~~ — **done 2026-07-06**. Swing-based
+   (`trail_stop_swing`), merged to `main` (`e4752a4`), 174/174 passing.
+   `trailing=True` now requires `exit_mode="swing"`.
+2. **Re-run `exit_mode="swing"` + swing-based trailing** on the same 4
+   real BTC days (June 29 – July 2, range_size=15.3). This will be the
+   first headline number where none of the three known measurement
+   distortions (R-freeze, reversal-exit friction, raw bar trailing) are
+   still in the way. Not yet run.
 3. **Write the pass/fail criterion in writing before that re-run**, not
    after. What bps, what t-stat, what robustness across
    `fill_probability`/`slippage_ticks` counts as "worth moving toward
@@ -648,7 +723,28 @@ As of the 2026-07-06 session, once CONTEXT.md itself is caught up:
    same way the reversal rule was audited — consistency demands it,
    since the reversal rule turned out to be a mistranslation of a
    one-line gloss and the bias rule came from the same kind of gloss.
-6. **Lower priority**: fix `config.example.yaml` drift (`market_ids:
+6. **Breakeven-transfer** (new, from 2026-07-06 Beggs reading). Beggs
+   moves stops to breakeven aggressively as a distinct management step,
+   separate from trailing. Not mechanized at all currently — the stop
+   stays at the 0-line (or the swing trail) until it happens to cross
+   breakeven on its own. Not yet scoped or built.
+7. **Two-parts-at-the-same-price divergence** (new, from 2026-07-06
+   Beggs reading). Beggs always opens both parts at ONE price; our
+   mechanization (via mrcvokka's adaptation) scales in at two different
+   limit prices (¼ and ½ lines). This is an inherited design choice, not
+   a bug, but worth naming as a known divergence from the primary
+   source. Not being changed now.
+8. **Second-timeframe management tier** (new, from mrcvokka's forum
+   diary, 2026-07-06 — lower-trust source than Beggs, treat as a
+   hypothesis). mrcvokka describes 3 tiers: one higher timeframe for
+   trend, and TWO separate lower timeframes — one for precise entry,
+   a DIFFERENT one for position management. We currently use the same
+   range-bar series (range_size=15.3) for both entry and
+   management/exit (including the new swing trail). A second, finer
+   bar series specifically for management is a real architectural
+   question but a bigger change than swing-trailing was — explicitly
+   deferred until the re-run in item 2 gives a number to react to.
+9. **Lower priority**: fix `config.example.yaml` drift (`market_ids:
    [0,1]` vs. the live 5-market set; BTC placeholder 5.00 vs. calibrated
    15.3); add mean-holding-time instrumentation to metrics (needed to
    check, not just assume, whether swing-mode's longer holds make the
