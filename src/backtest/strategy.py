@@ -225,7 +225,13 @@ class WFStrategy:
 
     def _record(self, part: dict, exit_price: float, exit_ts: int,
                 reason: str) -> None:
-        risk = abs(part["entry_price"] - self._stop_price)
+        # Use the risk frozen at entry (see _handle_fill), NOT self._stop_price,
+        # which trailing may have moved. Fallback to the live computation only
+        # for parts created before this field existed (defensive; all live
+        # code paths now set it).
+        risk = part.get("risk_at_entry")
+        if risk is None:
+            risk = abs(part["entry_price"] - self._stop_price)
         if self._side == "long":
             pnl = exit_price - part["entry_price"]
         else:
@@ -302,8 +308,16 @@ class WFStrategy:
             if not self._pos:  # first fill defines side and freezes levels
                 self._side = "long" if f.side == "buy" else "short"
                 self._stop_price = self._lines["0"]
+            # Freeze the risk basis at entry: |entry - stop AS OF THIS FILL|.
+            # Stored per-part so trailing (which mutates self._stop_price as
+            # the trade develops) can never retroactively change what this
+            # trade "risked". Without this, a trade whose trailing stop later
+            # crept close to entry would divide PnL by a near-zero risk and
+            # produce an absurd R-multiple (the -56,495,836 R blow-up).
+            risk_at_entry = abs(f.price - self._stop_price)
             self._pos.append({"tag": f.tag, "entry_price": f.price,
-                              "entry_ts": f.ts, "size": f.size})
+                              "entry_ts": f.ts, "size": f.size,
+                              "risk_at_entry": risk_at_entry})
             if f.tag == "part1":
                 self._part1_joined = True
             else:

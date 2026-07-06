@@ -418,3 +418,50 @@ def test_bar_mode_still_exits_on_single_opposite_bar_unchanged():
 def test_swing_tracker_is_none_in_bar_mode():
     r, e, s = _make_swing_stack("bar")
     assert s.swings is None
+
+
+# ---------------------------------------------------------------------------
+# R-freeze regression: trailing must NOT retroactively change a trade's risk
+# basis. Absence of this test is what let the -56,495,836 R blow-up ship.
+# ---------------------------------------------------------------------------
+
+def test_r_multiple_frozen_at_entry_not_trailed_stop():
+    # entry=100, stop-at-entry=90 -> risk MUST be 10 for all time.
+    # Trailing later drags the live stop to 99.9 (near entry). A correct
+    # R uses the frozen risk (10): PnL 5 / 10 = 0.5. The bug used the live
+    # stop (0.1): 5 / 0.1 = 50, and with a stop dragged to exactly entry it
+    # went to millions.
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
+                   part_size=1.0, trailing=True)
+    s._lines = {"0": 90.0, "q": 95.0, "h": 100.0, "tq": 110.0, "1": 120.0}
+    s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
+                        size=1.0, ts=0, tag="part1"))
+    assert s._pos[0]["risk_at_entry"] == 10.0
+
+    s._stop_price = 99.9                 # trailing crept the live stop near entry
+    s._record(s._pos[0], exit_price=105.0, exit_ts=10, reason="take")
+
+    t = s.trades[0]
+    assert abs(t.r_multiple - 0.5) < 1e-9    # NOT 50, NOT millions
+    assert t.risk == 10.0                     # frozen risk, not |100-99.9|
+
+
+def test_r_multiple_frozen_survives_full_trailing_run():
+    # End-to-end: a real trailing trade driven through on_range_bar must
+    # never produce a non-finite or absurd R. This is the integration-level
+    # guard (the unit test above isolates the mechanism).
+    import math
+    r = Replay(range_size=1.0, ema_fast=2, ema_slow=3)
+    e = FillEngine()
+    s = WFStrategy(r, e, keltner_period=2, mult_inner=1.0, mult_outer=2.0,
+                   part_size=1.0, trailing=True)
+    s._lines = {"0": 90.0, "q": 95.0, "h": 100.0, "tq": 110.0, "1": 120.0}
+    s._handle_fill(Fill(order_id=1, side="buy", kind="limit", price=100.0,
+                        size=1.0, ts=0, tag="part1"))
+    for lo in [100.5, 101.0, 101.5]:
+        s.on_range_bar(_swing_bar(h=lo + 1, l=lo, c=lo + 0.5))
+    for t in s.trades:
+        assert math.isfinite(t.r_multiple)
+        assert abs(t.r_multiple) < 100
