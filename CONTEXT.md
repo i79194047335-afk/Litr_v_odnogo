@@ -753,48 +753,50 @@ As of the 2026-07-06 session (trailing redesign now done):
 
 ## Repo structure
 
-src/ collector/   lighter_ticks.py        ✅ v2 schema, dedup by tid, snapshot skip
-list_markets.py         ✅ helper
-oxarchive_backfill.py   ✅ historical backfill + SDK bugfix
-compare_sources.py      ✅ cross-source cross-check
-rangebars/   builder.py              ✅ + tests
-calibrate.py            ✅ 30% of mean 1m range + tests
-indicators/  ema.py                  ✅ streaming, seed from first price
-keltner.py              ✅ shared core, mult 4 & 8
-stochastic.py           ✅ slow 3/2/3
-backtest/    replay.py               ✅ slice 1: harness, dual series
-orders.py               ✅ slice 2: fill engine + slippage/fill-prob
-strategy.py             ✅ slice 3+4: WF strategy + trailing +
-exit_mode ("bar" default / "swing" fix) +
-R-freeze fix + reversal-via-FillEngine (2026-07-06)
-swings.py               ✅ swing HH/HL + break-acceptance (2026-07-05)
-costs.py                ✅ slice 4: fees + funding
-metrics.py              ✅ slice 5: bps/R stats, breakdowns
-run_backtest.py         ✅ slice 5: CLI runner, ties it all together
+```
+src/
+  collector/   lighter_ticks.py        ✅ v2 schema, dedup by tid, snapshot skip
+               list_markets.py         ✅ helper
+               oxarchive_backfill.py   ✅ historical backfill + SDK bugfix
+               compare_sources.py      ✅ cross-source cross-check
+  rangebars/   builder.py              ✅ + tests
+               calibrate.py            ✅ 30% of mean 1m range + tests
+  indicators/  ema.py                  ✅ streaming, seed from first price
+               keltner.py              ✅ shared core, mult 4 & 8
+               stochastic.py           ✅ slow 3/2/3
+  backtest/    replay.py               ✅ slice 1: harness, dual series
+               orders.py               ✅ slice 2: fill engine + slippage/fill-prob
+               strategy.py             ✅ slice 3+4: WF strategy + trailing +
+                                          exit_mode ("bar" default / "swing" fix) +
+                                          R-freeze fix + reversal-via-FillEngine +
+                                          swing-based trailing (2026-07-06)
+               swings.py               ✅ swing HH/HL + break-acceptance (2026-07-05)
+               costs.py                ✅ slice 4: fees + funding
+               metrics.py              ✅ slice 5: bps/R stats, breakdowns
+               run_backtest.py         ✅ slice 5: CLI runner, ties it all together
 data/ticks/    JSONL, mixed v1 (legacy) and v2 (post-2026-07-02)
 docs/
-ytc_scalper_skeleton.md              strategic breakdown of Beggs
-kb_mrcvokka_diary.md                 full research, 19 pages, forum diary
+  ytc_scalper_skeleton.md              strategic breakdown of Beggs
+  kb_mrcvokka_diary.md                 full research, 19 pages, forum diary
 scripts/lighter-ticks.service          template (real unit in /etc/systemd/system/)
 tests/
-test_rangebars.py                    2 tests, passing
-test_collector.py                    14 tests, passing
-test_calibrate.py                    10 tests, passing
-test_indicators_ema.py               6 tests, passing
-test_indicators_keltner.py           6 tests, passing
-test_indicators_stochastic.py        6 tests, passing
-test_replay.py                       12 tests, passing
-test_orders.py                       25 tests, passing
-test_strategy.py                     36 tests, passing (was 30; +6 for
-the R-freeze + reversal-via-
-FillEngine fixes, 2026-07-06)
-test_costs.py                        19 tests, passing
-test_metrics.py                      14 tests, passing (was misreported
-as 15; corrected against actual
-pytest output, 2026-07-06)
-test_run_backtest.py                 6 tests, passing
-test_swings.py                       11 tests, passing
--- total: 167, verified via fresh clone + pytest, 2026-07-06 --
+  test_rangebars.py                    2 tests, passing
+  test_collector.py                    14 tests, passing
+  test_calibrate.py                    10 tests, passing
+  test_indicators_ema.py               6 tests, passing
+  test_indicators_keltner.py           6 tests, passing
+  test_indicators_stochastic.py        6 tests, passing
+  test_replay.py                       12 tests, passing
+  test_orders.py                       25 tests, passing
+  test_strategy.py                     43 tests, passing (was 36; +7 for
+                                          swing-based trailing, 2026-07-06)
+  test_costs.py                        19 tests, passing
+  test_metrics.py                      14 tests, passing
+  test_run_backtest.py                 6 tests, passing
+  test_swings.py                       11 tests, passing
+  -- total: 174, verified via fresh clone + pytest, 2026-07-06 (merge
+     e4752a4) --
+```
 .pre-commit-config.yaml                gitleaks local
 .github/workflows/gitleaks.yml         gitleaks server-side
 config.example.yaml                    reference
