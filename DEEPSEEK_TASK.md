@@ -19,115 +19,145 @@ Rules that apply to every task in this file:
   failure — stop and fix it, do not continue and do not report success.
   Prefer full-file overwrites over multi-site patch scripts when an edit
   touches more than ~3-4 sites in one file.
+- **Push your branch when done** (`git push -u origin <branch>` if it's
+  not tracked yet, else `git push`). A finished commit sitting
+  unpushed is not a finished task — this has bitten the project twice
+  already (see CONTEXT.md anti-patterns).
 - When done, leave the final `git log --oneline -3` of the branch as the
   last line of your output — Claude will ask Ivan to paste exactly that.
 
 ---
 
-## CURRENT TASK: swing-based trailing (replaces bar-based trailing)
+## CURRENT TASK: diagnostic bar/trade export for visualization
 
-**Branch**: `feature/swing-trailing` (already created off `main`, check it
-out, don't create a new one).
+**Branch**: create `feature/export-sample` off current `main`.
 
-**Files in scope**: `src/backtest/strategy.py`, `tests/test_strategy.py`.
+**Files in scope**: new file `src/backtest/export_sample.py`, new file
+`tests/test_export_sample.py`. Do not modify `strategy.py`, `replay.py`,
+or any other existing file — this is a read-only diagnostic tool, built
+by observing `WFStrategy` from the outside (subclassing), not by
+changing it.
 
-**Context**: `trailing=True` currently tightens the stop to the low/high
-of each closed range bar (function `trail_stop`, called from
-`_maybe_trail`). On real data this was too tight (95% of trades exited
-via stop in a run with trailing on). Replace it with trailing to the
-last CONFIRMED swing low/high instead — the same structural point
-`exit_mode="swing"` already uses (`SwingTracker` in
-`src/backtest/swings.py`, attributes `.last_swing_low` / `.last_swing_high`,
-`None` until confirmed). This makes trailing consistent with the exit
-rule instead of using an unrelated (bar-based) notion of "recent price".
+**Context**: Ivan can't see range-bar charts directly (no charting UI —
+this is a heredoc/VPS-only workflow) and needs a way to visually inspect
+what the strategy is doing bar-by-bar: bias, zone lines, swing points,
+entries, and exits (especially reversal exits, which are currently the
+main loss driver — see CONTEXT.md session log). This task exports a
+window of bars plus the trades that occurred in that window as JSON,
+which Claude will then render as an interactive chart.
 
-### 1. Forbid `trailing=True` + `exit_mode="bar"`
-
-In `WFStrategy.__init__`, after `self.trailing` / `self.exit_mode` are
-set, add:
+### 1. Design: subclass, don't modify
 
 ```python
-if trailing and exit_mode != "swing":
-    raise ValueError('trailing=True requires exit_mode="swing" — bar-based trailing is no longer supported (see CONTEXT.md anti-patterns)')
+from src.backtest.strategy import WFStrategy
+
+class ObservedStrategy(WFStrategy):
+    """Wraps WFStrategy to snapshot per-bar state after each bar close,
+    without touching strategy.py. Snapshots only bars in
+    [start_bar, start_bar + n_bars) by 0-indexed order of closure."""
+
+    def __init__(self, *args, start_bar: int = 0, n_bars: int = 300,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self.start_bar = start_bar
+        self.n_bars = n_bars
+        self._bar_index = -1
+        self.snapshots: list[dict] = []
+
+    def on_range_bar(self, bar) -> None:
+        super().on_range_bar(bar)
+        self._bar_index += 1
+        if self.start_bar <= self._bar_index < self.start_bar + self.n_bars:
+            b = self.bias()
+            self.snapshots.append({
+                "index": self._bar_index,
+                "start_ts": bar.start_ts,
+                "end_ts": bar.end_ts,
+                "o": bar.open, "h": bar.high, "l": bar.low, "c": bar.close,
+                "n_ticks": bar.n_ticks,
+                "bias": b,  # Bias = Literal["bull", "bear"] in strategy.py — plain string, no .value
+                "lines": dict(self._lines) if self._lines else None,
+                "swing_low": self.swings.last_swing_low if self.swings else None,
+                "swing_high": self.swings.last_swing_high if self.swings else None,
+                "in_position": bool(self._pos),
+                "side": self._side,
+                "stop_price": self._stop_price,
+            })
 ```
 
-### 2. New function `trail_stop_swing`
+`Bias` is confirmed as `Literal["bull", "bear"]` in `strategy.py` — a
+plain string, not an enum. Use `b` directly as shown above.
 
-Add next to the existing `trail_stop` in `strategy.py`:
-
-```python
-def trail_stop_swing(side: Literal["long", "short"], current_stop: float,
-                      swings: "SwingTracker") -> float:
-    """Tighten-only trailing candidate from the latest CONFIRMED swing
-    point (not the raw bar extreme). No-op if the relevant swing hasn't
-    confirmed yet (swings.last_swing_low/high is None) — same
-    tighten-only max/min discipline as trail_stop, so this can never
-    loosen a stop either."""
-    if side == "long":
-        level = swings.last_swing_low
-        if level is None:
-            return current_stop
-        return max(current_stop, level)
-    level = swings.last_swing_high
-    if level is None:
-        return current_stop
-    return min(current_stop, level)
-```
-
-### 3. Update `_maybe_trail`
-
-Replace the `trail_stop(...)` call with
-`trail_stop_swing(self._side, self._stop_price, self.swings)`. After
-step 1, this is the only reachable path when `self.trailing` is True —
-`self.swings` is guaranteed not `None` in that case (it's only ever
-`None` when `exit_mode != "swing"`, which trailing now forbids).
-
-### 4. Docstring
-
-Next to the existing "REVERSAL EXECUTION, corrected 2026-07-06" block in
-the class docstring, add a similarly dated block:
+### 2. CLI (`src/backtest/export_sample.py`, mirror `run_backtest.py`'s
+argument style — reuse `load_ticks`, `iter_price_ts` and construction
+pattern from there rather than duplicating differently):
 
 ```
-TRAILING REDESIGN, corrected 2026-07-06 (was: trail to raw bar low/high —
-too tight, 95% of trades exited via stop in a real run; now: trail to
-last CONFIRMED swing low/high, consistent with exit_mode="swing".
-trailing=True now requires exit_mode="swing").
+python -m src.backtest.export_sample \
+    --files data/ticks/trades_1_20260703.jsonl \
+    --range-size 15.3 --tick-size 0.1 \
+    --exit-mode swing \
+    --start-bar 0 --n-bars 300 \
+    --out sample.json
 ```
 
-### 5. Tests to remove/replace
+Also accept `--trailing` and `--swing-confirm-bars`, same as
+`run_backtest.py`, passed straight through to `ObservedStrategy`.
 
-`test_trailing_wiring_integration` (current version constructs
-`WFStrategy(..., trailing=True)` with no `exit_mode`, i.e. implicit
-`"bar"` — this construction will now raise). Replace it with a
-swing-mode equivalent: build a tick/bar sequence long enough to confirm
-at least one swing low (minimum 5 bars to confirm with
-`confirm_bars=2`, per `SwingTracker`'s own confirmation window), then
-assert the stop tightens to that swing's price — not to any bar's raw
-low. Derive the expected swing-low value by hand from the
-`SwingTracker` confirmation rule (candidate bar's low is lower than the
-2 bars before AND after it), not from running the code.
+### 3. Trade filtering
 
-### 6. Tests to add
+After running the replay to completion, filter `strategy.trades` (list
+of `Trade`, see the dataclass in `strategy.py`) to only those whose
+`entry_ts` OR `exit_ts` falls within
+`[snapshots[0]["start_ts"], snapshots[-1]["end_ts"]]` (inclusive) — a
+trade opened just before the window or closed just after it should
+still show up, since its entry or exit marker is still relevant context
+even if the other end is outside the window.
 
-- `WFStrategy(..., trailing=True, exit_mode="bar")` →
-  `pytest.raises(ValueError)`.
-- `WFStrategy(..., trailing=True, exit_mode="swing")` → constructs
-  without error.
-- `trail_stop_swing`: swing not yet confirmed (`last_swing_low=None`) →
-  returns `current_stop` unchanged.
-- `trail_stop_swing`: swing confirmed and pulls the stop forward (long:
-  `level > current_stop`) → returns `level`.
-- `trail_stop_swing`: swing confirmed but would loosen the stop (long:
-  `level < current_stop`) → returns `current_stop` unchanged
-  (never-loosens).
-- `trail_stop_swing`: at least one symmetric short-side case.
+### 4. Output JSON shape
+
+```json
+{
+  "meta": {
+    "files": ["..."], "range_size": 15.3, "tick_size": 0.1,
+    "exit_mode": "swing", "trailing": false, "swing_confirm_bars": 2,
+    "start_bar": 0, "n_bars": 300,
+    "bars_exported": "<actual count, may be < n_bars if the run ended early>"
+  },
+  "bars": "<one dict per snapshot, as built above, in index order>",
+  "trades": "<filtered Trade dicts: side, tag, entry_price, entry_ts, exit_price, exit_ts, exit_reason, r_multiple>"
+}
+```
+
+Write with `json.dump(..., indent=None)` (compact, this will be pasted/
+uploaded, no need for human-formatted JSON) via `--out <path>`; if
+`--out` is omitted, print compact JSON to stdout.
+
+### 5. Tests (`tests/test_export_sample.py`)
+
+Build a tiny synthetic tick stream (a handful of hand-picked prices/
+timestamps — same style as existing `test_strategy.py` fixtures) where
+you can hand-derive exactly which bars should close and what
+`start_bar`/`n_bars` should select. Cover:
+- Window selection: with a stream producing >= 6 known bars, request
+  `start_bar=2, n_bars=3` and assert exactly bars index 2,3,4 appear in
+  `snapshots`, with hand-verified OHLC values for each (derive from the
+  synthetic tick stream on paper, not from running the code).
+- Trade filtering: construct a scenario (reuse `SWING_FORMATION_BARS`-
+  style fixtures from `test_strategy.py` if that's easier than
+  inventing new ones — check what's importable) where a trade's
+  entry_ts is INSIDE the window and exit_ts is AFTER it — assert it's
+  still included. And one where both entry_ts and exit_ts are before
+  `start_bar`'s window — assert it's excluded.
+- JSON output is valid and round-trips (`json.loads(json.dumps(...))`
+  matches the in-memory dict).
+
+### 6. Before your final commit
+
+Run `pytest -q` on the whole suite (existing 174 + your new tests).
+State the new total in the commit message.
 
 ### 7. Do NOT touch
 
-`CONTEXT.md`, `README.md`, anything outside
-`src/backtest/strategy.py` / `tests/test_strategy.py`.
-
-### 8. Before your final commit
-
-Run `pytest -q` on the whole suite. Put the resulting pass count in the
-commit message (starting point was 167; state the new total).
+`CONTEXT.md`, `README.md`, `strategy.py`, `replay.py`, `run_backtest.py`,
+any file outside the two new files listed in "Files in scope".
