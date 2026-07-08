@@ -23,141 +23,138 @@ Rules that apply to every task in this file:
   not tracked yet, else `git push`). A finished commit sitting
   unpushed is not a finished task — this has bitten the project twice
   already (see CONTEXT.md anti-patterns).
+- **Write up findings, but don't treat your own conclusion as final.**
+  Ivan and Claude review every DeepSeek result independently (fresh
+  clone, re-run, hand-check) before acting on it — same standard
+  applied to Claude's own work. Report the raw numbers plainly and give
+  your own preliminary read, but flag it as preliminary, not settled.
 - When done, leave the final `git log --oneline -3` of the branch as the
   last line of your output — Claude will ask Ivan to paste exactly that.
 
 ---
 
-## CURRENT TASK: diagnostic bar/trade export for visualization
+## CURRENT TASK: two parts, run in order
 
-**Branch**: create `feature/export-sample` off current `main`.
+**Branch**: create `feature/bias-audit-no-reversal` off current `main`.
 
-**Files in scope**: new file `src/backtest/export_sample.py`, new file
-`tests/test_export_sample.py`. Do not modify `strategy.py`, `replay.py`,
-or any other existing file — this is a read-only diagnostic tool, built
-by observing `WFStrategy` from the outside (subclassing), not by
-changing it.
+**Background** (context only, so the "why" is clear — don't re-derive
+this, it's already established): a prior session found that reversal
+exits are the strategy's main loss driver, and that the swing points
+triggering those reversals are usually very recently formed (0-4 bars
+before entry in a hand-checked sample) — i.e. the exit rule is mostly
+reacting to short-term noise, not established structure. Claude
+separately re-read the Beggs primary source on trend determination
+(not available to you — it's Russian-translated PDFs in Claude's
+project knowledge, not in this repo) and confirmed by direct code read
+that `compute_bias()` in `strategy.py` is a pure, stateless function
+with **zero acceptance/hold-time filter** — it recomputes fresh every
+bar from EMA values and last close, with no memory of prior state. Beggs
+explicitly warns against exactly this failure mode for trend-reading
+(a break that doesn't hold shouldn't flip your read), the same principle
+already used to fix the reversal-exit rule. This task measures whether
+that gap actually matters on real data.
 
-**Context**: Ivan can't see range-bar charts directly (no charting UI —
-this is a heredoc/VPS-only workflow) and needs a way to visually inspect
-what the strategy is doing bar-by-bar: bias, zone lines, swing points,
-entries, and exits (especially reversal exits, which are currently the
-main loss driver — see CONTEXT.md session log). This task exports a
-window of bars plus the trades that occurred in that window as JSON,
-which Claude will then render as an interactive chart.
+### Part A — bias-regime empirical audit (measurement only, no code
+changes to strategy.py)
 
-### 1. Design: subclass, don't modify
+**Files in scope**: new file `src/backtest/bias_audit.py`, new file
+`tests/test_bias_audit.py`.
+
+Build a diagnostic tool (same non-invasive subclass pattern as
+`src/backtest/export_sample.py` from a prior task — read that file
+first for the established style) that runs the standard pipeline
+(`Replay` + `FillEngine` + `WFStrategy(exit_mode="swing", trailing=False)`,
+same as every other real-data run this project has done) and reports,
+**per file/day**, both across ALL 8 real BTC days (the 4 calibration
+days June 29 - July 2 AND the 4 out-of-sample days July 3-6 — list both
+sets separately in the output, don't merge them):
+
+1. **Bias regime-length distribution**: every time `self.bias()`
+   changes value (including transitions to/from `None`), that's a new
+   regime. Record each regime's length in bars. Report median, min, max,
+   and a simple histogram bucketed as `<5 bars`, `5-20 bars`, `>20 bars`
+   (count in each bucket), separately for `bull`, `bear`, and `None`
+   regimes.
+2. **Bias age at entry**: for every trade in `strategy.trades`, find
+   how many bars the CURRENT bias regime had existed at the moment of
+   that trade's entry (same "age" concept already used for the swing
+   analysis — bars since the regime last changed value, looking
+   backward from the entry bar). Report the distribution (median, min,
+   max) across all trades, pooled across all 8 days.
+
+Output as plain text to stdout (this is a one-off diagnostic run, not
+part of the CLI suite — a simple script is fine, doesn't need
+`argparse` polish, but DOES need to actually run against real files
+under `data/ticks/` — hardcode the 8 filenames or accept them as
+positional args, your choice, just make it runnable and show the exact
+command you used).
+
+**Tests**: hand-derive a synthetic bias sequence (a short list of bias
+values across bars, worked out by hand, e.g. `[None, None, "bear",
+"bear", "bear", "bull", "bull", None]`) and hand-verify the regime
+detection produces the correct segments and lengths BEFORE writing the
+detection code, the same way `SWING_FORMATION_BARS` was hand-derived
+in `test_strategy.py`. Test the "age at entry" calculation the same way
+`filter_trades`/bar-index tests were done for `export_sample.py`
+(construct a case with a known entry_ts landing partway through a known
+regime, assert the correct age).
+
+### Part B — no-reversal-exit variant (run only after Part A completes;
+if Part A's numbers already make the outcome obvious to you, still
+run Part B — it answers a different question and isn't gated on Part A's
+result, just sequenced after it)
+
+**Files in scope**: new file `src/backtest/no_reversal_variant.py`
+(or add to `bias_audit.py` if that reads more naturally — your call,
+just keep it out of `strategy.py`), no test file strictly required for
+this part since it's a thin override with no new logic of its own, but
+add one or two tests if you judge it adds real confidence, not just to
+pad the count.
+
+Design (do not modify `strategy.py`):
 
 ```python
 from src.backtest.strategy import WFStrategy
 
-class ObservedStrategy(WFStrategy):
-    """Wraps WFStrategy to snapshot per-bar state after each bar close,
-    without touching strategy.py. Snapshots only bars in
-    [start_bar, start_bar + n_bars) by 0-indexed order of closure."""
+class NoReversalStrategy(WFStrategy):
+    """Reversal exit permanently disabled — take-profit and the static
+    0-line stop are the only exits. Everything else (entries, costs,
+    trailing if enabled) is unchanged from WFStrategy."""
 
-    def __init__(self, *args, start_bar: int = 0, n_bars: int = 300,
-                 **kwargs):
-        super().__init__(*args, **kwargs)
-        self.start_bar = start_bar
-        self.n_bars = n_bars
-        self._bar_index = -1
-        self.snapshots: list[dict] = []
+    def _check_reversal_bar_mode(self, bar) -> bool:
+        return False
 
-    def on_range_bar(self, bar) -> None:
-        super().on_range_bar(bar)
-        self._bar_index += 1
-        if self.start_bar <= self._bar_index < self.start_bar + self.n_bars:
-            b = self.bias()
-            self.snapshots.append({
-                "index": self._bar_index,
-                "start_ts": bar.start_ts,
-                "end_ts": bar.end_ts,
-                "o": bar.open, "h": bar.high, "l": bar.low, "c": bar.close,
-                "n_ticks": bar.n_ticks,
-                "bias": b,  # Bias = Literal["bull", "bear"] in strategy.py — plain string, no .value
-                "lines": dict(self._lines) if self._lines else None,
-                "swing_low": self.swings.last_swing_low if self.swings else None,
-                "swing_high": self.swings.last_swing_high if self.swings else None,
-                "in_position": bool(self._pos),
-                "side": self._side,
-                "stop_price": self._stop_price,
-            })
+    def _check_reversal_swing_mode(self, bar) -> bool:
+        return False
 ```
 
-`Bias` is confirmed as `Literal["bull", "bear"]` in `strategy.py` — a
-plain string, not an enum. Use `b` directly as shown above.
+Run this variant with `exit_mode="swing", trailing=False` (matching the
+current best-diagnosed baseline, so the comparison is apples-to-apples
+against runs already on record) via `run_backtest.py`'s existing
+plumbing (`Replay` + `FillEngine` + this strategy class + `apply_costs_to_trades`
++ `compute_metrics` — reuse those functions directly, don't reimplement
+metrics). Run it on:
+- The 4 in-sample days (June 29 - July 2) as one combined run.
+- The 4 out-of-sample days (July 3-6) as a separate combined run.
 
-### 2. CLI (`src/backtest/export_sample.py`, mirror `run_backtest.py`'s
-argument style — reuse `load_ticks`, `iter_price_ts` and construction
-pattern from there rather than duplicating differently):
+Report the same metrics block `run_backtest.py` normally prints (bps
+expectancy, t-stat, win rate, profit factor, max drawdown, breakdown by
+exit_reason — note `exit_reason` will now only ever be `take` or `stop`,
+never `reversal`).
 
-```
-python -m src.backtest.export_sample \
-    --files data/ticks/trades_1_20260703.jsonl \
-    --range-size 15.3 --tick-size 0.1 \
-    --exit-mode swing \
-    --start-bar 0 --n-bars 300 \
-    --out sample.json
-```
+### Write-up
 
-Also accept `--trailing` and `--swing-confirm-bars`, same as
-`run_backtest.py`, passed straight through to `ObservedStrategy`.
+Append a short summary (raw numbers first, your preliminary read
+second, clearly labeled as preliminary) to a new file
+`docs/BIAS_AUDIT_2026-07-07.md`. Do not touch any other doc file.
 
-### 3. Trade filtering
+### Before your final commit
 
-After running the replay to completion, filter `strategy.trades` (list
-of `Trade`, see the dataclass in `strategy.py`) to only those whose
-`entry_ts` OR `exit_ts` falls within
-`[snapshots[0]["start_ts"], snapshots[-1]["end_ts"]]` (inclusive) — a
-trade opened just before the window or closed just after it should
-still show up, since its entry or exit marker is still relevant context
-even if the other end is outside the window.
-
-### 4. Output JSON shape
-
-```json
-{
-  "meta": {
-    "files": ["..."], "range_size": 15.3, "tick_size": 0.1,
-    "exit_mode": "swing", "trailing": false, "swing_confirm_bars": 2,
-    "start_bar": 0, "n_bars": 300,
-    "bars_exported": "<actual count, may be < n_bars if the run ended early>"
-  },
-  "bars": "<one dict per snapshot, as built above, in index order>",
-  "trades": "<filtered Trade dicts: side, tag, entry_price, entry_ts, exit_price, exit_ts, exit_reason, r_multiple>"
-}
-```
-
-Write with `json.dump(..., indent=None)` (compact, this will be pasted/
-uploaded, no need for human-formatted JSON) via `--out <path>`; if
-`--out` is omitted, print compact JSON to stdout.
-
-### 5. Tests (`tests/test_export_sample.py`)
-
-Build a tiny synthetic tick stream (a handful of hand-picked prices/
-timestamps — same style as existing `test_strategy.py` fixtures) where
-you can hand-derive exactly which bars should close and what
-`start_bar`/`n_bars` should select. Cover:
-- Window selection: with a stream producing >= 6 known bars, request
-  `start_bar=2, n_bars=3` and assert exactly bars index 2,3,4 appear in
-  `snapshots`, with hand-verified OHLC values for each (derive from the
-  synthetic tick stream on paper, not from running the code).
-- Trade filtering: construct a scenario (reuse `SWING_FORMATION_BARS`-
-  style fixtures from `test_strategy.py` if that's easier than
-  inventing new ones — check what's importable) where a trade's
-  entry_ts is INSIDE the window and exit_ts is AFTER it — assert it's
-  still included. And one where both entry_ts and exit_ts are before
-  `start_bar`'s window — assert it's excluded.
-- JSON output is valid and round-trips (`json.loads(json.dumps(...))`
-  matches the in-memory dict).
-
-### 6. Before your final commit
-
-Run `pytest -q` on the whole suite (existing 174 + your new tests).
+Run `pytest -q` on the whole suite (existing 185 + whatever you added).
 State the new total in the commit message.
 
-### 7. Do NOT touch
+### Do NOT touch
 
-`CONTEXT.md`, `README.md`, `strategy.py`, `replay.py`, `run_backtest.py`,
-any file outside the two new files listed in "Files in scope".
+`CONTEXT.md`, `README.md`, `strategy.py`, `replay.py`, `orders.py`,
+`costs.py`, `metrics.py`, `run_backtest.py`, `swings.py`, any file
+outside what's listed above in "Files in scope".
