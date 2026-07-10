@@ -440,6 +440,82 @@ See `docs/ytc_scalper_skeleton.md` for the full breakdown. In brief:
   new session with a fresh `git clone` + `pytest` run, before reading
   any chat summary or acting on this file's own "done" claims.**
 
+## Session log (2026-07-10)
+
+Audit session. Two documented "facts" this file had been carrying turned out
+to be wrong, and both were caught by measuring before acting.
+
+- **Standing checklist created**: `docs/AUDIT_2026-07-10.md`, referenced from
+  this file's header. It supersedes "Next steps" below wherever they disagree.
+  Items carry IDs and statuses so they survive session boundaries — the
+  problem this file itself keeps having.
+- **A1 — the legacy retro-dedup was CANCELLED, not done, because its premise
+  was false.** The plan was to dedup v1 files on `(t,p,s,side)`. Validating
+  that key first — against v2 files where `tid` gives the real answer — showed
+  it falsely collapses 9.4–17.1% of *genuine* trades: one sweep filling
+  several resting orders prints several rows sharing ms/price/size/side. Three
+  independent disproofs (clean v2 files collide at up to 17.1% with zero real
+  dupes; neither the batch-repeat nor the run-length signature of duplication
+  is present; the live collector logs `dropped_dup=0` on every market).
+  The old "17.5% before / 0.0% after" compared `(t,p,s,side)` collisions to
+  `tid` collisions — two different quantities. Running the script would have
+  deleted ~10–17% of real BTC/ETH ticks. Tool + evidence:
+  `src/collector/dupe_diagnostic.py` (12 tests). Claim retracted here, in
+  Open questions, and in `lighter_ticks.py`'s docstring.
+- **A4 — `range_size` was a constant fitted to one regime.** Per-day BTC
+  calibration spans 8.9–16.1 (nearly 2×); every OOS run used 15.3, so Jul 4–5
+  traded bars ~60–70% too large. Built rolling prior-day calibration
+  (`src/rangebars/rolling.py`, `Replay(range_size_schedule=...)`,
+  `--rolling-range-size`) — no lookahead, and unlike a constant it is
+  something a live bot can compute. **Correcting the size did not rescue the
+  result**: Jul 3–9 went from −0.3253 bps (t = −2.48) fixed to −0.3673 bps
+  (t = −4.33) rolling, on 52% more trades. Under fixed sizing one day printed
+  a positive mean; under rolling none does. The confound is closed and the
+  negative verdict survives it. Full result:
+  `docs/ROLLING_CALIBRATION_2026-07-10.md`.
+  Free sanity check: `0.30 × mean_1m_range(Jul 2)` rounds to exactly 15.3, and
+  Jul 3 comes out bit-identical between the two runs — the switching machinery
+  does nothing when it should do nothing.
+- **`config.yaml` deliberately NOT edited.** The finding is that a constant is
+  the wrong *shape* for this parameter; writing a fresh constant would bury it.
+  Only a comment was added, pointing at A4.
+- **`PASS_FAIL_CRITERION.md` suspended, not amended.** It still named Jul 3–6
+  as out-of-sample, though those days have been used three times to select
+  between variants (bias audit, no-reversal variant, acceptance sweep). A
+  banner now says so in the file someone opens right before running it. The
+  calibration/validation/holdout re-split is Ivan's risk call, not Claude's,
+  and is open as item A2.
+- **Method note worth keeping**: a dedup key is a *hypothesis about identity*.
+  Validating it on data that already has a real identity column costs minutes.
+  The wrong number lived here for two sessions because nobody did that.
+
+## Session log (2026-07-07)
+
+Recorded retroactively on 2026-07-10 — this session's work was never written
+into this file, which is itself an instance of the drift documented below.
+
+- **Pass/fail criterion written down before the re-run** (`f6d689f`), per the
+  previous session's Next-steps item 3. See its banner: now suspended.
+- **Diagnostic bar/trade export** (`export_sample.py`, DeepSeek task file,
+  merged `7ca3d02`) for eyeballing bars/trades outside the terminal.
+- **Bias-regime empirical audit + no-reversal-exit variant** (`bias_audit.py`,
+  `no_reversal_variant.py`, merged `a98cc14`). Results in
+  `docs/BIAS_AUDIT_2026-07-07.md`. Headline: bias churn is high (30–50% of
+  regimes last <5 bars) but only ~9–11% of entries land in one that fresh; and
+  removing reversal exits entirely does NOT help — sessions collapse from
+  1,370 to 30 in-sample and the stop dominates. The real question is which
+  filter makes reversals selective, not whether to have them.
+  **Caveat found 2026-07-10**: that document describes reversal exits as
+  closing positions "by a bias flip". They do not — they close on a swing
+  break. See AUDIT item S3 before reasoning from it.
+- **`acceptance_bars` parameterized** in `swings.py` + `acceptance_variant.py`
+  sweep (branch `feature/acceptance-window`, `4e3c068`). Widening
+  `swing_confirm_bars` had made things worse, motivating a separate knob for
+  how long a BREAK must hold, as distinct from how mature the swing POINT is.
+- **`diag_take_vs_rest.py`** written to test Ivan's liquidity hypothesis
+  (do take-exits differ from the rest in pre-entry volatility, participation,
+  aggressor imbalance?). It sat **untracked** until 2026-07-10.
+
 ## Session log (2026-07-06)
 
 Short session, high-value catch: verified the previous session's
@@ -722,6 +798,14 @@ Key events from the current chat, most recent first:
 
 ## Next steps (priority order)
 
+> **STALE as of 2026-07-10. The live list is `docs/AUDIT_2026-07-10.md`.**
+> Where the two disagree, the audit wins. Specifically: item 4 below
+> (out-of-sample split) is now audit item A2 and is *blocking*, not pending;
+> item 5 (EMA-bias audit) was done on 2026-07-07; the retro-dedup this file
+> used to call for was cancelled outright (audit A1); and `range_size` is no
+> longer a single constant (audit A4). The list below is kept because items
+> 6–8 have not been superseded by anything.
+
 As of the 2026-07-06 session (trailing redesign now done):
 
 1. ~~Trailing redesign~~ — **done 2026-07-06**. Swing-based
@@ -776,49 +860,64 @@ As of the 2026-07-06 session (trailing redesign now done):
 
 ## Repo structure
 
+Counts below were read off `pytest --collect-only` on 2026-07-10 at commit
+`9673587` (branch `feature/acceptance-window`), not copied forward. When you
+update this block, measure — don't increment.
+
 ```
 src/
   collector/   lighter_ticks.py        ✅ v2 schema, dedup by tid, snapshot skip
                list_markets.py         ✅ helper
                oxarchive_backfill.py   ✅ historical backfill + SDK bugfix
                compare_sources.py      ✅ cross-source cross-check
+               dupe_diagnostic.py      ✅ real dupes vs key-collision artifact
+                                          (2026-07-10 — why retro-dedup was cancelled)
   rangebars/   builder.py              ✅ + tests
                calibrate.py            ✅ 30% of mean 1m range + tests
+               rolling.py              ✅ prior-day range_size schedule, no
+                                          lookahead (2026-07-10, AUDIT A4)
   indicators/  ema.py                  ✅ streaming, seed from first price
                keltner.py              ✅ shared core, mult 4 & 8
                stochastic.py           ✅ slow 3/2/3
-  backtest/    replay.py               ✅ slice 1: harness, dual series
+  backtest/    replay.py               ✅ slice 1: harness, dual series +
+                                          optional range_size_schedule (2026-07-10)
                orders.py               ✅ slice 2: fill engine + slippage/fill-prob
                strategy.py             ✅ slice 3+4: WF strategy + trailing +
                                           exit_mode ("bar" default / "swing" fix) +
                                           R-freeze fix + reversal-via-FillEngine +
                                           swing-based trailing (2026-07-06)
-               swings.py               ✅ swing HH/HL + break-acceptance (2026-07-05)
+               swings.py               ✅ swing HH/HL + break-acceptance (2026-07-05),
+                                          acceptance_bars parameterized (2026-07-07)
                costs.py                ✅ slice 4: fees + funding
                metrics.py              ✅ slice 5: bps/R stats, breakdowns
-               run_backtest.py         ✅ slice 5: CLI runner, ties it all together
+               run_backtest.py         ✅ slice 5: CLI runner + --rolling-range-size
+               export_sample.py        ✅ bar/trade export for visualization (07-07)
+               bias_audit.py           ✅ bias-regime empirical audit (07-07)
+               no_reversal_variant.py  ✅ reversal exits disabled (07-07)
+               acceptance_variant.py   ✅ acceptance_bars sweep (07-07)
+               rolling_variant.py      ✅ rolling vs fixed range_size (07-10)
+diag_take_vs_rest.py                   ✅ pre-entry conditions, take vs rest (07-07)
 data/ticks/    JSONL, mixed v1 (legacy) and v2 (post-2026-07-02)
 docs/
   ytc_scalper_skeleton.md              strategic breakdown of Beggs
   kb_mrcvokka_diary.md                 full research, 19 pages, forum diary
+  PASS_FAIL_CRITERION.md               provisional gate — SUSPENDED, see its banner
+  BIAS_AUDIT_2026-07-07.md             bias-regime audit + no-reversal variant
+  AUDIT_2026-07-10.md                  ← THE live open-items checklist
+  ROLLING_CALIBRATION_2026-07-10.md    rolling vs fixed range_size result
 scripts/lighter-ticks.service          template (real unit in /etc/systemd/system/)
 tests/
-  test_rangebars.py                    2 tests, passing
-  test_collector.py                    14 tests, passing
-  test_calibrate.py                    10 tests, passing
-  test_indicators_ema.py               6 tests, passing
-  test_indicators_keltner.py           6 tests, passing
-  test_indicators_stochastic.py        6 tests, passing
-  test_replay.py                       12 tests, passing
-  test_orders.py                       25 tests, passing
-  test_strategy.py                     43 tests, passing (was 36; +7 for
-                                          swing-based trailing, 2026-07-06)
-  test_costs.py                        19 tests, passing
-  test_metrics.py                      14 tests, passing
-  test_run_backtest.py                 6 tests, passing
-  test_swings.py                       11 tests, passing
-  -- total: 174, verified via fresh clone + pytest, 2026-07-06 (merge
-     e4752a4) --
+  test_strategy.py                     43     test_collector.py             14
+  test_orders.py                       25     test_metrics.py              14
+  test_costs.py                        19     test_dupe_diagnostic.py      12
+  test_rolling.py                      18     test_export_sample.py        11
+  test_replay.py                       17     test_calibrate.py            10
+  test_bias_audit.py                   15     test_run_backtest.py          6
+  test_swings.py                       14     test_indicators_{ema,keltner,stochastic}.py  6 each
+                                              test_acceptance_variant.py    4
+                                              test_no_reversal_variant.py   3
+                                              test_rangebars.py             2
+  -- total: 245, measured 2026-07-10 at 9673587 --
 ```
 .pre-commit-config.yaml                gitleaks local
 .github/workflows/gitleaks.yml         gitleaks server-side
