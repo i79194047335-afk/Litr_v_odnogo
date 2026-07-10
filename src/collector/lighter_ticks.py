@@ -15,10 +15,18 @@ Older files without `tid` (schema v1) remain readable — anything downstream
 must treat `tid` as optional when loading historical data.
 
 DEDUP:
-  Lighter's WebSocket occasionally repeats the same trade multiple times
-  within one `update/trade` batch (measured: ~17.5% of raw rows are
-  duplicates of a trade already delivered a few frames earlier). We track
-  recently-seen trade_ids in a bounded set and drop repeats.
+  We track recently-seen trade_ids in a bounded set and drop repeats.
+
+  CORRECTION 2026-07-10: this docstring used to claim "~17.5% of raw rows are
+  duplicates of a trade already delivered a few frames earlier". That figure
+  was an artifact — it came from counting `(t,p,s,side)` collisions, which a
+  single sweep filling several resting orders in the same millisecond
+  produces in abundance. The live counters below have logged
+  `dropped_dup=0` on every market since the switch to `tid`: Lighter does
+  NOT re-deliver trades on `update/trade`. The real (small) duplicate source
+  was the reconnect snapshot, handled separately below. Keeping the Deduper
+  anyway — it is cheap, it is correct, and it is the only thing that lets us
+  make that statement with evidence. See src/collector/dupe_diagnostic.py.
 
 SNAPSHOT HANDLING:
   On (re)connect the server sends one `subscribed/trade` frame containing

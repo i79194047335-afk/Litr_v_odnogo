@@ -174,9 +174,18 @@ appended to by the live collector. Not clean for cross-check purposes.
 Only the first UTC day where live wrote from `00:00:00.x` matters —
 verified for 2026-07-01 BTC.
 
-**Duplicate rates in legacy v1 data** (pre-fix): ETH 21.7%, BTC 16.7%.
-After the fix, new data is 0.0%. All pre-July-2 data therefore needs a
-one-time dedup pass (see Open Questions).
+**Duplicate rates in legacy v1 data — RETRACTED 2026-07-10.** This file used
+to say "ETH 21.7%, BTC 16.7%, after the fix 0.0%, all pre-July-2 data needs a
+dedup pass". That comparison was invalid: the pre-fix number counted
+`(t,p,s,side)` collisions, the post-fix number counted `tid` collisions —
+two different quantities. Clean v2 files (0.00% `tid` duplicates) collide on
+`(t,p,s,side)` at 9.4–17.1%, because one sweep filling several resting orders
+prints several same-ms/price/size/side rows. The v1 rates sit inside that
+natural range, the live collector logs `dropped_dup=0` continuously, and the
+batch-repeat and run-length signatures duplication would leave are both
+absent. **The v1 files are not meaningfully duplicated; the dedup pass was
+cancelled, not deferred.** See `src/collector/dupe_diagnostic.py` (with tests)
+and `docs/AUDIT_2026-07-10.md` item A1 for the full evidence.
 
 **Status: the October 2025 backfill rows in this table are reference-only**
 (see the undercount finding in "Confirmed 0xArchive facts"). Calibration
@@ -622,8 +631,10 @@ Key events from the current chat, most recent first:
   dropped, `is not None` checks, missing `is_maker_ask` → drop with
   warning, JSON/YAML error handling, periodic stats logging).
   `tests/test_collector.py` covers `_normalize_trade` edge cases and
-  `Deduper` semantics (14 tests). Verified: 0.0% dupes on new data,
-  vs 17-22% on legacy files.
+  `Deduper` semantics (14 tests). Verified: 0.0% dupes on new data.
+  (The "vs 17-22% on legacy files" half of this claim was retracted
+  2026-07-10 — it compared `tid` collisions to `(t,p,s,side)` collisions.
+  See "Data on disk" above.)
 - **Cross-check tool written.** `compare_sources.py` — reads two JSONL
   files, prints volume/side/overlap stats and a plain-language verdict.
 - **Backfill script written.** `oxarchive_backfill.py` — `list-markets` +
@@ -692,11 +703,16 @@ Key events from the current chat, most recent first:
    0xArchive facts". Mapping confirmed, but the undercount finding means
    we don't act on the "unlock 9 months of history" branch — backfill
    stays reference-only regardless of a correct side mapping.
-2. **Retro-dedup of legacy v1 files**. Older JSONL has no `tid`, so
-   dedup falls back to `(t, p, s, side)`. Less precise (may collapse
-   distinct trades with identical price/size at the same ms) but still
-   removes ~17-22% of false volume. One-time script, run in place with
-   a `.bak` alongside. Low priority — only a few days of pre-fix data.
+2. ~~**Retro-dedup of legacy v1 files**~~ — **CANCELLED 2026-07-10.** The
+   fallback key `(t, p, s, side)` was the whole problem: the "may collapse
+   distinct trades with identical price/size at the same ms" caveat this
+   item carried turned out to describe the DOMINANT effect, not a rounding
+   error. Measured on clean v2 files, that key falsely collapses 9.4–17.1%
+   of genuine trades — as much as the "duplicates" it was meant to remove.
+   Meanwhile `dropped_dup=0` in the live logs shows there were never
+   duplicates on `update/trade` to remove. Running the script would have
+   deleted ~10-17% of real BTC/ETH ticks. Evidence + reproducible tool:
+   `src/collector/dupe_diagnostic.py`, `docs/AUDIT_2026-07-10.md` item A1.
 3. ~~Retro-dedup or fresh re-backfill?~~ — **moot**. Re-downloading from
    0xArchive with the fixed cursor handling would still hit the same
    burst-undercount ceiling; it's a source limitation, not a pagination
