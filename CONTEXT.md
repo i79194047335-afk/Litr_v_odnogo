@@ -15,6 +15,13 @@
 > VPS while a session summary reported it as done and pushed. Both times
 > the only thing that caught it was a fresh clone + test run, not reading
 > this file or a chat summary.
+>
+> **`docs/AUDIT_2026-07-10.md` is the live open-items checklist.** It
+> supersedes the "Next steps" section below wherever the two disagree, and
+> it records three blocking findings (dirty in-sample data, a burnt
+> out-of-sample set, repo/CONTEXT drift) that this file does not yet
+> reflect. Read it before planning a session. This file's session log and
+> test count are stale as of 2026-07-10 (says 174 tests; reality is 210).
 
 ## TL;DR
 
