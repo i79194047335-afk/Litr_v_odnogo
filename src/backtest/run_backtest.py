@@ -34,6 +34,7 @@ import sys
 from pathlib import Path
 
 from src.rangebars.calibrate import iter_price_ts
+from src.rangebars.rolling import schedule_from_ticks, utc_day
 from src.backtest.replay import Replay
 from src.backtest.orders import FillEngine
 from src.backtest.strategy import WFStrategy
@@ -59,7 +60,19 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Run the WF backtest over tick JSONL")
     ap.add_argument("--files", nargs="+", required=True,
                     help="JSONL tick files, IN CHRONOLOGICAL ORDER")
-    ap.add_argument("--range-size", type=float, required=True)
+    ap.add_argument("--range-size", type=float, required=True,
+                    help="fixed range-bar size; with --rolling-range-size this "
+                         "is only the SEED for the first day (which has no "
+                         "prior day to calibrate from)")
+    ap.add_argument("--rolling-range-size", action="store_true", default=False,
+                    help="recalibrate range_size each UTC day from the PRIOR "
+                         "day's mean 1m range (AUDIT A4). Reads the tick files "
+                         "twice. The first day is calibration-only in spirit — "
+                         "it trades on the seed size, so exclude it or pass an "
+                         "extra leading day.")
+    ap.add_argument("--calib-pct", type=float, default=0.30,
+                    help="fraction of prior-day mean 1m range (default 0.30, "
+                         "the mrcvokka heuristic); only with --rolling-range-size")
     ap.add_argument("--ema-fast", type=int, default=15)
     ap.add_argument("--ema-slow", type=int, default=20)
     ap.add_argument("--keltner-period", type=int, default=35)
@@ -90,8 +103,26 @@ def main() -> None:
             print(f"ERROR: file not found: {f}", file=sys.stderr)
             sys.exit(2)
 
+    schedule = None
+    if args.rolling_range_size:
+        # First pass, over days strictly earlier than the day each size is
+        # applied to — see rolling.py. Not lookahead, but it does mean the
+        # files must be re-readable, hence a fresh generator per pass.
+        schedule = schedule_from_ticks(
+            load_ticks(files), pct=args.calib_pct,
+            tick=args.tick_size if args.tick_size > 0 else None,
+        )
+        print(f"rolling range_size: {len(schedule)} day(s) calibrated "
+              f"(pct={args.calib_pct})")
+        for day in sorted(schedule):
+            print(f"  day {day} (from day {day - 1}): {schedule[day]:.4f}")
+        if not schedule:
+            print("WARNING: no day has a usable predecessor — every day will "
+                  "run on the seed --range-size. Pass an extra leading day.",
+                  file=sys.stderr)
+
     replay = Replay(range_size=args.range_size, ema_fast=args.ema_fast,
-                    ema_slow=args.ema_slow)
+                    ema_slow=args.ema_slow, range_size_schedule=schedule)
     engine = FillEngine(slippage_ticks=args.slippage_ticks,
                         tick_size=args.tick_size,
                         fill_probability=args.fill_probability,
