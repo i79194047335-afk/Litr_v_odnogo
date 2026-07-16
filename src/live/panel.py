@@ -29,27 +29,46 @@ st.set_page_config(page_title="Lighter Panel", page_icon="📊", layout="wide")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# helpers
+# async plumbing
 # ═══════════════════════════════════════════════════════════════════════════
+
+# Streamlit runs its script synchronously — there is NO running event loop
+# during module execution or widget rendering.  The Lighter SDK creates an
+# aiohttp TCPConnector during SignerClient.__init__, which calls
+# asyncio.get_running_loop() and crashes.
+#
+# Fix: a single *persistent* event loop that lives for the lifetime of the
+# Streamlit process.  All async work (SDK construction + every API call)
+# runs on this loop via loop.run_until_complete().
+
+_LOOP = asyncio.new_event_loop()
 
 
 def _run_async(coro):
-    """Run an async coroutine and return its result (blocking)."""
-    return asyncio.run(coro)
+    """Run an async coroutine on the persistent loop (blocking)."""
+    return _LOOP.run_until_complete(coro)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# client
+# ═══════════════════════════════════════════════════════════════════════════
 
 
 @st.cache_resource
 def _get_client() -> SignerClient:
-    """Create and cache the SignerClient — survives Streamlit reruns."""
+    """Create and cache the SignerClient on the persistent loop."""
     pk = os.getenv("TESTNET_PRIVATE_KEY", "")
     if pk.startswith("0x"):
         pk = pk[2:]
 
-    client = SignerClient(
-        url=TESTNET_URL,
-        account_index=ACCOUNT_INDEX,
-        api_private_keys={API_KEY_INDEX: pk},
-    )
+    async def _construct():
+        return SignerClient(
+            url=TESTNET_URL,
+            account_index=ACCOUNT_INDEX,
+            api_private_keys={API_KEY_INDEX: pk},
+        )
+
+    client = _LOOP.run_until_complete(_construct())
     err = client.check_client()
     if err:
         st.error(f"Client check failed: {err}")
@@ -57,8 +76,6 @@ def _get_client() -> SignerClient:
     return client
 
 
-# Lazy global — first access triggers _get_client(), which must happen
-# inside Streamlit's runtime (not at module import).
 _client: SignerClient | None = None
 
 
