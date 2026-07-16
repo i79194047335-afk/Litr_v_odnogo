@@ -6,20 +6,42 @@ Usage:
 """
 
 import asyncio
+import json
 import os
 import sys
 import time
+import urllib.parse
 
+import aiohttp
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from lighter import SignerClient, AccountApi, Configuration  # noqa: E402
+from lighter import SignerClient  # noqa: E402
 
 TESTNET_URL = "https://testnet.zklighter.elliot.ai"
 ACCOUNT_INDEX = 306        # from testnet web UI "Your Account Index"
 API_KEY_INDEX = 0           # from testnet web UI "API Key Index"
 ETH_MARKET = 0              # ETH-PERP
+
+
+def _account_url(base_url: str, account_index: int) -> str:
+    """Build the /api/v1/account URL with correct param `by=index`.
+
+    The Lighter SDK's AccountApi.account() passes `by=account_index` which
+    the API rejects (20001 invalid param).  The actual API expects `by=index`.
+    """
+    return f"{base_url}/api/v1/account?by=index&value={account_index}"
+
+
+def _format_price(ticks: int) -> str:
+    """Convert integer price ticks to a dollar string (price_decimals=2)."""
+    return f"${ticks / 100:,.2f}"
+
+
+def _format_size(ticks: int) -> str:
+    """Convert integer size ticks to ETH string (size_decimals=4)."""
+    return f"{ticks / 10_000:.4f} ETH"
 
 
 async def main():
@@ -46,23 +68,35 @@ async def main():
         sys.exit(1)
     print("✓ Client check passed (API key accepted by testnet)")
 
-    # ── read account ───────────────────────────────────────────────────
-    account_api = AccountApi(client.api_client)
+    # ── read account (direct HTTP — SDK has a `by=account_index` vs `by=index` bug) ──
     print(f"\n─── Account {ACCOUNT_INDEX} ───")
-    try:
-        account = await account_api.account(
-            by="account_index", value=str(ACCOUNT_INDEX)
-        )
-        print(f"  Status:      {account.status}")
-        print(f"  Collateral:  {account.collateral}")
-        bal = getattr(account, "available_balance", None)
-        print(f"  Avail bal:   {bal}")
-        extra = getattr(account, "additional_properties", {}) or {}
-        if extra:
-            print(f"  Extra keys:  {list(extra.keys())}")
-    except Exception as e:
-        print(f"  (public account endpoint failed: {e})")
-        print(f"  (continuing — private API key works, will test orders)")
+    async with aiohttp.ClientSession() as session:
+        async with session.get(_account_url(TESTNET_URL, ACCOUNT_INDEX)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                accts = data.get("accounts", [])
+                if accts:
+                    a = accts[0]
+                    print(f"  Status:        {a.get('status')}")
+                    print(f"  L1 address:    {a.get('l1_address')}")
+                    print(f"  Collateral:    ${float(a.get('collateral', 0)):,.2f}")
+                    print(f"  Avail balance: ${float(a.get('available_balance', 0)):,.2f}")
+                    # assets
+                    for asset in a.get("assets", []):
+                        bal = float(asset.get("balance", 0))
+                        if bal > 0:
+                            print(f"  Asset {asset['symbol']}: {bal:,.8f} (margin_mode={asset.get('margin_mode')})")
+                    # positions
+                    for pos in a.get("positions", []):
+                        size = float(pos.get("position", 0))
+                        if size != 0:
+                            entry = float(pos.get("avg_entry_price", 0))
+                            side = "LONG" if pos.get("sign", 1) > 0 else "SHORT"
+                            upnl = float(pos.get("unrealized_pnl", 0))
+                            print(f"  Pos {pos['symbol']}: {side} {abs(size):,.4f} @ ${entry:,.2f}  uPnL: ${upnl:,.2f}")
+            else:
+                body = await resp.text()
+                print(f"  (HTTP {resp.status}: {body[:200]})")
 
     # ── order book snapshot ────────────────────────────────────────────
     print(f"\n─── ETH-PERP (market {ETH_MARKET}) Order Book ───")
