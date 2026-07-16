@@ -44,6 +44,7 @@ def _get_client() -> SignerClient:
     pk = os.getenv("TESTNET_PRIVATE_KEY", "")
     if pk.startswith("0x"):
         pk = pk[2:]
+
     client = SignerClient(
         url=TESTNET_URL,
         account_index=ACCOUNT_INDEX,
@@ -54,6 +55,18 @@ def _get_client() -> SignerClient:
         st.error(f"Client check failed: {err}")
         st.stop()
     return client
+
+
+# Lazy global — first access triggers _get_client(), which must happen
+# inside Streamlit's runtime (not at module import).
+_client: SignerClient | None = None
+
+
+def get_client() -> SignerClient:
+    global _client
+    if _client is None:
+        _client = _get_client()
+    return _client
 
 
 def _get_auth_token(client: SignerClient) -> str:
@@ -124,8 +137,6 @@ def _size_to_ticks(size: float, market_id: int) -> int:
 st.title("📊 Lighter Testnet Panel")
 st.caption(f"Account {ACCOUNT_INDEX}  ·  {TESTNET_URL}")
 
-client = _get_client()
-
 # ── refresh trigger ───────────────────────────────────────────────────────
 
 if "last_refresh" not in st.session_state:
@@ -178,6 +189,9 @@ with st.sidebar:
             st.markdown(f"  uPnL: :{upnl_color}[${upnl:,.2f}]")
     if not has_position:
         st.text("(no open positions)")
+
+# Init client now — Streamlit's event loop is running.
+client = get_client()
 
 # ── main panel ────────────────────────────────────────────────────────────
 
