@@ -637,6 +637,33 @@ Severity guessed from the armchair was wrong; the API said so in one call.
 Round-trip latency measured as a by-product — see the gotchas section. It
 closes an open item that had been sitting since 2026-07-08.
 
+**Later the same day: review pass, merge, and fills.** An external review
+found four more things, three of them real and one of them serious:
+
+- **The panel was on the open internet.** Streamlit binds 0.0.0.0 by
+  default, this VPS has a public IP and no firewall, and the panel has no
+  auth and trades. It was reachable at `http://<public-ip>:8501` for ~2
+  hours — measured, not theorised: the still-running instance answered 200
+  from outside while being fixed. Now loopback-only via
+  `.streamlit/config.toml`. **Claude handed Ivan that run command without
+  once thinking about the bind address.**
+- **`int()` truncation** in the tick conversions: `0.29 * 100` is
+  `28.999999999999996`, so a close of 0.29 went out as 0.28 and left dust.
+  `round()` now, with hand-derived tests that pin the truncation premise
+  itself.
+- **Severity called wrong, again.** The review flagged the
+  `int(s.replace(".", ""))` parsing as broken; measuring said latent — the
+  exchange pads to exactly `decimals` today (322/322 values checked). Fixed
+  anyway, since it rests on an undocumented courtesy, but the honest label
+  is hardening, not a live bug. Worth noting the direction: this time the
+  overstatement was in the review, and the earlier one (decimals as "tech
+  debt") was Claude's. Measure, then rank.
+
+Both tracks merged to `main` (245 + 21 = 266 tests, verified from a fresh
+clone), and the Fills tab closed step 2's last spec item. The realized-PnL
+derivation was hand-checked against Ivan's own closed shorts: SOL
+(75.789 - 75.255) x 771.278 = 411.862452, matching the API exactly.
+
 ## Session log (2026-07-10)
 
 Audit session. Two documented "facts" this file had been carrying turned out
@@ -1026,12 +1053,11 @@ Key events from the current chat, most recent first:
 **Live/testnet track (as of 2026-07-17)** — runs in parallel with the
 backtest list below; real money still gated on backtest edge + testnet.
 
-0. **Step 2 is not done.** Its spec says "buttons, position table, balance,
-   **fills**" — fills were never built. The Orders tab shows resting
-   orders, which is a different thing: nothing in the panel shows the price
-   a trade actually executed at. On a track whose whole purpose is to see
-   real execution, that is the wrong thing to be missing. Build it before
-   calling step 2 complete or moving to step 3.
+0. ~~Step 2 is not done — fills missing~~ — **built 2026-07-17** (78ed3f4).
+   The Fills tab shows side, role, price, size and realized PnL per fill,
+   all derived from the account index rather than taken on trust (the API
+   describes a trade, not our part in it). Step 2's spec is met. Its
+   rendering is still unclicked — see the standing rule in item 1.
 1. ~~Have a human run the panel and click twice~~ — **done 2026-07-17**;
    it found the `_LOOP` lifetime bug (open question 5), which no amount of
    reading had. Keep the habit: after any panel change, click twice. The
@@ -1157,13 +1183,14 @@ src/
                                           it trades — loopback only, via
                                           .streamlit/config.toml, reach it over
                                           an SSH tunnel. Order paths fixed and
-                                          verified live 2026-07-17.
-                                          NOT DONE: fills view, which step 2's
-                                          own spec asks for — step 2 is not
-                                          closed. Tests cover the tick
-                                          conversions only; the panel itself
-                                          has none (Streamlit script, cannot be
-                                          imported).
+                                          verified live 2026-07-17. Tabs:
+                                          Trading, Orders, Order Book, Fills.
+                                          Step 2 spec is now met.
+                                          Tests cover the tick conversions
+                                          only; the panel itself has none
+                                          (Streamlit script, cannot be
+                                          imported) — its rendering is only
+                                          ever proven by a human clicking.
 diag_take_vs_rest.py                   ✅ pre-entry conditions, take vs rest (07-07)
 data/ticks/    JSONL, mixed v1 (legacy) and v2 (post-2026-07-02)
 docs/
