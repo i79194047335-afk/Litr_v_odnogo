@@ -238,6 +238,29 @@ def _position_field(position: dict, field: str):
     return position[field]
 
 
+def _fill_view(trade, account_index: int) -> dict:
+    """Our side of a fill. The API describes the trade, not our part in it.
+
+    A trade names both counterparties (ask_account_id / bid_account_id) and
+    which side was maker (is_maker_ask). Whether *we* bought or sold, and
+    whether *we* paid the taker side, only follows from comparing those to
+    our own account index — verified against real fills on 2026-07-17.
+
+    Realized PnL arrives split across two fields, per the SDK's own wording:
+    bid_account_pnl when the fill reduced a short, ask_account_pnl when it
+    reduced a long. Either is absent when the fill opened rather than
+    reduced, which is why an empty PnL here means "no PnL", not "unknown".
+    """
+    we_are_ask = trade.ask_account_id == account_index
+    we_are_maker = trade.is_maker_ask if we_are_ask else not trade.is_maker_ask
+    pnl = getattr(trade, "ask_account_pnl" if we_are_ask else "bid_account_pnl", None)
+    return {
+        "side": "SELL" if we_are_ask else "BUY",
+        "role": "maker" if we_are_maker else "taker",
+        "pnl": None if pnl is None else float(pnl),
+    }
+
+
 def _market_symbol(market_id: int) -> str:
     return _market_field(market_id, "symbol")
 
@@ -340,7 +363,9 @@ client = get_client()
 
 # ── main panel ────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3 = st.tabs(["📈 Trading", "📋 Orders", "📖 Order Book"])
+tab1, tab2, tab3, tab4 = st.tabs(
+    ["📈 Trading", "📋 Orders", "📖 Order Book", "🧾 Fills"]
+)
 
 # ── Tab 1: Trading ────────────────────────────────────────────────────────
 
@@ -596,6 +621,81 @@ with tab3:
             spread_pct = ((best_ask - best_bid) / best_bid) * 100
             st.caption(
                 f"Spread: ${best_ask - best_bid:,.2f}  ({spread_pct:.4f}%)"
+            )
+
+# ── Tab 4: Fills ──────────────────────────────────────────────────────────
+#
+# The point of the whole live track: what price did a trade ACTUALLY get.
+# Orders (tab 2) shows intent; this shows outcome. Note it lists every fill
+# on the account, including ones made in Lighter's own web UI — the panel is
+# not the only hand here.
+
+with tab4:
+    st.subheader("Fills")
+
+    col_n, col_m = st.columns([1, 2])
+    with col_n:
+        fills_limit = st.slider("Show last", 5, 100, 25, key="fills_limit")
+    with col_m:
+        fills_market = st.selectbox(
+            "Market",
+            options=[None, 0, 1, 2],
+            format_func=lambda m: "All" if m is None else _market_symbol(m),
+            key="fills_market",
+        )
+
+    if st.button("🔄 Load Fills") or auto_refresh:
+        do_refresh()
+        auth = _get_auth_token(client)
+        kwargs = dict(
+            sort_by="timestamp",
+            limit=fills_limit,
+            authorization=auth,
+            account_index=ACCOUNT_INDEX,
+        )
+        if fills_market is not None:
+            kwargs["market_id"] = fills_market
+        resp = _run_async(client.order_api.trades(**kwargs))
+        fills = getattr(resp, "trades", []) or []
+
+        if not fills:
+            st.text("(no fills yet)")
+        else:
+            rows, realized = [], 0.0
+            for t in fills:
+                v = _fill_view(t, ACCOUNT_INDEX)
+                if v["pnl"] is not None:
+                    realized += v["pnl"]
+                rows.append(
+                    {
+                        "Time": time.strftime(
+                            "%m-%d %H:%M:%S", time.localtime(t.timestamp / 1000)
+                        ),
+                        "Market": _market_symbol(t.market_id),
+                        "Side": v["side"],
+                        "Role": v["role"],
+                        "Size": f"{_api_decimal(t.size):,.4f}",
+                        "Price": f"${_api_decimal(t.price):,.2f}",
+                        "USD": f"${_api_decimal(t.usd_amount):,.2f}",
+                        "Realized PnL": "—"
+                        if v["pnl"] is None
+                        else f"${v['pnl']:,.4f}",
+                        "Trade ID": t.trade_id,
+                    }
+                )
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+
+            sign = "green" if realized >= 0 else "red"
+            st.markdown(
+                f"Realized PnL across these {len(rows)} fills: "
+                f":{sign}[${realized:,.4f}]"
+            )
+            st.caption(
+                "Realized PnL is per fill and only appears where a fill "
+                "reduced a position — opening fills show '—'. The total is "
+                "for the fills listed above, not account lifetime. Fills "
+                "settled in the same block share a timestamp; Trade ID "
+                "breaks the tie and matches the exchange's own ordering."
             )
 
 # ── footer ─────────────────────────────────────────────────────────────────
