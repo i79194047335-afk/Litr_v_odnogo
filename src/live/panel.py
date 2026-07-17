@@ -25,6 +25,10 @@ API_KEY_INDEX = 0
 ETH_MARKET = 0  # ETH-PERP
 BTC_MARKET = 1  # BTC-PERP
 
+# Taker orders are IOC: priced exactly at top-of-book they simply don't fill
+# if the market moves a tick.  This is the acceptable-price buffer.
+MAX_SLIPPAGE = 0.005  # 0.5%
+
 st.set_page_config(page_title="Lighter Panel", page_icon="📊", layout="wide")
 
 
@@ -117,18 +121,54 @@ def fetch_account() -> dict:
 # ── order helpers ─────────────────────────────────────────────────────────
 
 
+async def _fetch_market_meta() -> dict:
+    url = f"{TESTNET_URL}/api/v1/orderBooks"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            resp.raise_for_status()
+            return await resp.json()
+
+
+@st.cache_data(ttl=3600)
+def _market_meta() -> dict:
+    """Per-market decimals, read from the exchange.
+
+    These were hardcoded once and drifted: SOL was 2/4 against a real 3/3,
+    which sends SOL orders at 1/10 the price and 10x the size.  Scaling is
+    the exchange's fact to state, not ours to remember.
+    """
+    meta = {}
+    for ob in _run_async(_fetch_market_meta()).get("order_books", []):
+        meta[int(ob["market_id"])] = {
+            "symbol": ob.get("symbol") or str(ob["market_id"]),
+            "price_decimals": int(ob["supported_price_decimals"]),
+            "size_decimals": int(ob["supported_size_decimals"]),
+        }
+    if not meta:
+        st.error("Could not read market metadata — refusing to guess scaling.")
+        st.stop()
+    return meta
+
+
+def _market_field(market_id: int, field: str):
+    try:
+        return _market_meta()[market_id][field]
+    except KeyError:
+        # Guessing a default here is what caused the SOL 10x bug.
+        st.error(f"No {field} for market {market_id} — refusing to guess.")
+        st.stop()
+
+
 def _market_symbol(market_id: int) -> str:
-    return {0: "ETH", 1: "BTC", 2: "SOL", 24: "HYPE", 92: "XAU"}.get(
-        market_id, str(market_id)
-    )
+    return _market_field(market_id, "symbol")
 
 
 def _price_decimals(market_id: int) -> int:
-    return {0: 2, 1: 1, 2: 2, 24: 3, 92: 1}.get(market_id, 2)
+    return _market_field(market_id, "price_decimals")
 
 
 def _size_decimals(market_id: int) -> int:
-    return {0: 4, 1: 5, 2: 4, 24: 4, 92: 4}.get(market_id, 4)
+    return _market_field(market_id, "size_decimals")
 
 
 def _ticks_to_price(ticks: int, market_id: int) -> float:
@@ -282,22 +322,12 @@ with tab1:
                     )
             else:
                 with st.spinner("Placing market order..."):
-                    best = _run_async(
-                        client.order_api.order_book_orders(
-                            market_id=market_id, limit=1
-                        )
-                    )
-                    ref_price = int(
-                        best.bids[0].price.replace(".", "")
-                        if is_ask
-                        else best.asks[0].price.replace(".", "")
-                    )
                     _, tx_resp, err = _run_async(
-                        client.create_market_order(
+                        client.create_market_order_limited_slippage(
                             market_index=market_id,
                             client_order_index=int(time.time() * 1000) % 2**31,
                             base_amount=size_ticks,
-                            avg_execution_price=ref_price,
+                            max_slippage=MAX_SLIPPAGE,
                             is_ask=is_ask,
                         )
                     )
@@ -323,7 +353,8 @@ with tab1:
                 pos_market = p.get("market_id", 0)
                 pos_symbol = p.get("symbol", str(pos_market))
                 pos_sign = p.get("sign", 1)
-                close_side = pos_sign < 0  # opposite of position sign: long→sell, short→buy
+                # Close = trade against the position: long (sign > 0) → sell.
+                close_side = pos_sign > 0
 
                 with st.container(border=True):
                     st.markdown(
@@ -337,14 +368,14 @@ with tab1:
                         do_refresh()
                         with st.spinner(f"Closing {pos_symbol}..."):
                             _, tx_resp, err = _run_async(
-                                client.create_market_order(
+                                client.create_market_order_limited_slippage(
                                     market_index=pos_market,
                                     client_order_index=int(time.time() * 1000)
                                     % 2**31,
                                     base_amount=abs(
                                         _size_to_ticks(pos_size, pos_market)
                                     ),
-                                    avg_execution_price=0,  # will be overridden
+                                    max_slippage=MAX_SLIPPAGE,
                                     is_ask=close_side,
                                     reduce_only=True,
                                 )
@@ -372,8 +403,9 @@ with tab2:
         if orders:
             rows = []
             for o in orders:
-                price = _ticks_to_price(o.price, o.market_index)
-                size = _ticks_to_size(o.remaining_base_amount, o.market_index)
+                # SDK types these as strings ("1800.50"), already scaled.
+                price = float(o.price)
+                size = float(o.remaining_base_amount)
                 side = "SELL" if o.is_ask else "BUY"
                 rows.append(
                     {
