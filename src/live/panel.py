@@ -1,21 +1,37 @@
 """Minimal trading panel for Lighter testnet — Streamlit.
 
-This panel has NO authentication and places real orders. `.streamlit/
-config.toml` binds it to loopback for that reason; reach it over an SSH
-tunnel, never by exposing the port.
+This panel has NO authentication and places real orders. Never let it
+listen anywhere the internet can reach — `.streamlit/config.toml` defaults
+it to loopback for that reason.
 
-Usage — on the VPS:
+Usage — loopback (the safe default):
     source .venv/bin/activate
     streamlit run src/live/panel.py
 
-Usage — from your laptop, in another terminal:
-    ssh -N -L 8501:127.0.0.1:8501 root@<vps>
-    open http://localhost:8501
+Usage — Ivan's VPS, reached from his phone over the Amnezia VPN. An SSH
+tunnel is impractical from a phone, so the panel listens on all interfaces
+and **iptables** is what keeps it private: 8501 accepts only the VPN subnet
+(172.29.172.0/24, where VPN client traffic arrives after the container
+NATs it) and localhost, and DROPs everything else.
+
+    export STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    nohup streamlit run src/live/panel.py &
+    # then http://<vps-ip>:8501 from a VPN-connected device
+
+    # the rules that make the above safe — WITHOUT THEM IT IS PUBLIC:
+    iptables -I INPUT -p tcp --dport 8501 -j DROP
+    iptables -I INPUT -p tcp --dport 8501 -s 172.29.172.0/24 -j ACCEPT
+    iptables -I INPUT -p tcp --dport 8501 -s 127.0.0.1 -j ACCEPT
+
+**These rules do not survive a reboot** (no iptables-persistent installed).
+After any reboot, re-add them BEFORE starting the panel, or check with
+`iptables -L INPUT -n | grep 8501`.
 """
 
 import asyncio
 import json
 import os
+import threading
 import time
 
 import aiohttp
@@ -104,20 +120,34 @@ st.set_page_config(page_title="Lighter Panel", page_icon="📊", layout="wide")
 # So the loop must be cached the same way the client is: same lifetime, same
 # loop, or the client outlives the loop it belongs to.
 #
-# Known limit: @st.cache_resource is shared across browser sessions, and a
-# loop is not safe to drive from several threads at once.  Fine for a
-# single-operator panel; revisit if this is ever opened to two users.
+# 3. Streamlit runs scripts concurrently — two tabs, or a click landing while
+#    the previous run is still going.  Caching the loop but driving it with
+#    run_until_complete() then fails the other way: the second thread finds
+#    the loop already running and dies with "This event loop is already
+#    running".  Seen in the log within minutes of the first real use.
+#
+# The shape that satisfies all three: the loop runs forever in its own daemon
+# thread, and callers submit coroutines to it with run_coroutine_threadsafe.
+# One loop for the client's whole life, and no caller ever drives it.
 
 
 @st.cache_resource
 def _get_loop() -> asyncio.AbstractEventLoop:
-    """One event loop for the whole Streamlit process — see above."""
-    return asyncio.new_event_loop()
+    """One event loop, spinning in its own thread for the process's life."""
+    loop = asyncio.new_event_loop()
+    threading.Thread(
+        target=loop.run_forever, name="lighter-loop", daemon=True
+    ).start()
+    return loop
 
 
 def _run_async(coro):
-    """Run an async coroutine on the cached loop (blocking)."""
-    return _get_loop().run_until_complete(coro)
+    """Submit a coroutine to the loop thread and wait for it (blocking).
+
+    Thread-safe by construction: concurrent Streamlit script runs queue onto
+    the same loop instead of fighting over it.
+    """
+    return asyncio.run_coroutine_threadsafe(coro, _get_loop()).result()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -322,7 +352,7 @@ def do_refresh():
 
 with st.sidebar:
     st.header("Account")
-    if st.button("🔄 Refresh", use_container_width=True):
+    if st.button("🔄 Refresh", width="stretch"):
         do_refresh()
 
     account = fetch_account()
@@ -416,7 +446,7 @@ with tab1:
 
         if st.button(
             f"{'🔴' if is_ask else '🟢'} {side} {_market_symbol(market_id)}",
-            use_container_width=True,
+            width="stretch",
             type="primary",
         ):
             do_refresh()
@@ -480,7 +510,7 @@ with tab1:
                     if st.button(
                         f"Close {pos_symbol}",
                         key=f"close_{pos_market}",
-                        use_container_width=True,
+                        width="stretch",
                     ):
                         do_refresh()
                         with st.spinner(f"Closing {pos_symbol}..."):
@@ -533,7 +563,7 @@ with tab2:
                         "Status": o.status,
                     }
                 )
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            st.dataframe(rows, width="stretch", hide_index=True)
 
             # cancel button
             st.divider()
@@ -596,7 +626,7 @@ with tab3:
                     {"Price": f"${price:,.2f}", "Size": f"{size:,.4f}"}
                 )
             if ask_rows:
-                st.dataframe(ask_rows, use_container_width=True, hide_index=True)
+                st.dataframe(ask_rows, width="stretch", hide_index=True)
             else:
                 st.text("(empty)")
 
@@ -610,7 +640,7 @@ with tab3:
                     {"Price": f"${price:,.2f}", "Size": f"{size:,.4f}"}
                 )
             if bid_rows:
-                st.dataframe(bid_rows, use_container_width=True, hide_index=True)
+                st.dataframe(bid_rows, width="stretch", hide_index=True)
             else:
                 st.text("(empty)")
 
@@ -683,7 +713,7 @@ with tab4:
                         "Trade ID": t.trade_id,
                     }
                 )
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            st.dataframe(rows, width="stretch", hide_index=True)
 
             sign = "green" if realized >= 0 else "red"
             st.markdown(
