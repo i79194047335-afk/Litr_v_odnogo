@@ -91,9 +91,9 @@ MAX_SLIPPAGE = 0.005  # 0.5%
 # to touch real fills quickly, and the worst case is play money. It is NOT
 # acceptable against real funds: a stray click closes a position at market.
 # Before this panel ever points at mainnet it needs, at minimum, a confirm
-# dialog on market/close, a max notional per order, and authentication (see
-# .streamlit/config.toml — today the only thing between this UI and the
-# internet is an SSH tunnel).
+# dialog on market/close, a max notional per order, and authentication —
+# today the only thing between this UI and the internet is an iptables rule
+# that does not survive a reboot (see the module docstring).
 
 st.set_page_config(page_title="Lighter Panel", page_icon="📊", layout="wide")
 
@@ -341,7 +341,12 @@ if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = 0.0
 
 now = time.time()
-auto_refresh = now - st.session_state.last_refresh > 5.0  # auto every 5 s
+# NOT a timer, despite how it reads. Streamlit reruns the script only on
+# interaction, so this means "you clicked something AND the last load is 5s
+# stale" — never "refreshes by itself". The order book does have a real
+# timer (see _order_book_fragment); these tabs deliberately do not, to keep
+# a manual panel from polling the exchange in the background.
+refresh_if_stale = now - st.session_state.last_refresh > 5.0
 
 
 def do_refresh():
@@ -537,7 +542,7 @@ with tab1:
 with tab2:
     st.subheader("Active Orders")
 
-    if st.button("🔄 Load Orders") or auto_refresh:
+    if st.button("🔄 Load Orders") or refresh_if_stale:
         do_refresh()
         auth = _get_auth_token(client)
         active = _run_async(
@@ -596,62 +601,85 @@ with tab2:
 
 # ── Tab 3: Order Book ─────────────────────────────────────────────────────
 
-with tab3:
+@st.fragment(run_every="2s")
+def _order_book_fragment() -> None:
+    """The order book, refreshing itself.
+
+    A fragment reruns on its own timer and touches nothing else on the page,
+    so the book can tick without the sidebar's balance flickering. Its
+    widgets live in here on purpose: moving the depth slider then reruns
+    only this block, not the whole script — which is what used to fire a
+    rerun per intermediate value and race the event loop.
+
+    Streamlit renders every tab, visible or not, and a fragment cannot tell
+    that it is hidden — so this would poll forever in the background. Hence
+    the Live switch: unticked, the timer still fires and does nothing.
+    """
     st.subheader("Order Book")
 
-    ob_market = st.selectbox(
-        "Market",
-        options=[0, 1, 2],
-        format_func=lambda m: _market_symbol(m),
-        key="ob_market",
-    )
-    ob_depth = st.slider("Depth", 1, 20, 5, key="ob_depth")
+    c1, c2, c3 = st.columns([2, 2, 1])
+    with c1:
+        ob_market = st.selectbox(
+            "Market",
+            options=[0, 1, 2],
+            format_func=lambda m: _market_symbol(m),
+            key="ob_market",
+        )
+    with c2:
+        ob_depth = st.slider("Depth", 1, 20, 5, key="ob_depth")
+    with c3:
+        live = st.toggle("Live", value=True, key="ob_live")
 
-    if st.button("📖 Show Order Book") or auto_refresh:
-        do_refresh()
-        ob = _run_async(
-            client.order_api.order_book_orders(
-                market_id=ob_market, limit=ob_depth
+    if not live:
+        st.caption("Paused — tick Live to resume.")
+        return
+
+    ob = _run_async(
+        client.order_api.order_book_orders(market_id=ob_market, limit=ob_depth)
+    )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**Asks (Sells)**")
+        ask_rows = []
+        for o in ob.asks[:ob_depth]:
+            price = _api_decimal(o.price)
+            size = _api_decimal(o.remaining_base_amount)
+            ask_rows.append(
+                {"Price": f"${price:,.2f}", "Size": f"{size:,.4f}"}
             )
+        if ask_rows:
+            st.dataframe(ask_rows, width="stretch", hide_index=True)
+        else:
+            st.text("(empty)")
+
+    with col_b:
+        st.markdown("**Bids (Buys)**")
+        bid_rows = []
+        for o in ob.bids[:ob_depth]:
+            price = _api_decimal(o.price)
+            size = _api_decimal(o.remaining_base_amount)
+            bid_rows.append(
+                {"Price": f"${price:,.2f}", "Size": f"{size:,.4f}"}
+            )
+        if bid_rows:
+            st.dataframe(bid_rows, width="stretch", hide_index=True)
+        else:
+            st.text("(empty)")
+
+    if ob.bids and ob.asks:
+        best_bid = _api_decimal(ob.bids[0].price)
+        best_ask = _api_decimal(ob.asks[0].price)
+        spread_pct = ((best_ask - best_bid) / best_bid) * 100
+        st.caption(
+            f"Spread: ${best_ask - best_bid:,.2f}  ({spread_pct:.4f}%)"
         )
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown("**Asks (Sells)**")
-            ask_rows = []
-            for o in ob.asks[:ob_depth]:
-                price = _api_decimal(o.price)
-                size = _api_decimal(o.remaining_base_amount)
-                ask_rows.append(
-                    {"Price": f"${price:,.2f}", "Size": f"{size:,.4f}"}
-                )
-            if ask_rows:
-                st.dataframe(ask_rows, width="stretch", hide_index=True)
-            else:
-                st.text("(empty)")
+    st.caption(f"Live · every 2s · {time.strftime('%H:%M:%S')}")
 
-        with col_b:
-            st.markdown("**Bids (Buys)**")
-            bid_rows = []
-            for o in ob.bids[:ob_depth]:
-                price = _api_decimal(o.price)
-                size = _api_decimal(o.remaining_base_amount)
-                bid_rows.append(
-                    {"Price": f"${price:,.2f}", "Size": f"{size:,.4f}"}
-                )
-            if bid_rows:
-                st.dataframe(bid_rows, width="stretch", hide_index=True)
-            else:
-                st.text("(empty)")
 
-        spread_pct = 0
-        if ob.bids and ob.asks:
-            best_bid = _api_decimal(ob.bids[0].price)
-            best_ask = _api_decimal(ob.asks[0].price)
-            spread_pct = ((best_ask - best_bid) / best_bid) * 100
-            st.caption(
-                f"Spread: ${best_ask - best_bid:,.2f}  ({spread_pct:.4f}%)"
-            )
+with tab3:
+    _order_book_fragment()
 
 # ── Tab 4: Fills ──────────────────────────────────────────────────────────
 #
@@ -674,7 +702,7 @@ with tab4:
             key="fills_market",
         )
 
-    if st.button("🔄 Load Fills") or auto_refresh:
+    if st.button("🔄 Load Fills") or refresh_if_stale:
         do_refresh()
         auth = _get_auth_token(client)
         kwargs = dict(
