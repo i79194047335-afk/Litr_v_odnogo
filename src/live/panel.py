@@ -1,8 +1,16 @@
 """Minimal trading panel for Lighter testnet — Streamlit.
 
-Usage:
+This panel has NO authentication and places real orders. `.streamlit/
+config.toml` binds it to loopback for that reason; reach it over an SSH
+tunnel, never by exposing the port.
+
+Usage — on the VPS:
     source .venv/bin/activate
-    streamlit run src/live/panel.py --server.port 8501
+    streamlit run src/live/panel.py
+
+Usage — from your laptop, in another terminal:
+    ssh -N -L 8501:127.0.0.1:8501 root@<vps>
+    open http://localhost:8501
 """
 
 import asyncio
@@ -198,6 +206,18 @@ def _market_field(market_id: int, field: str):
         st.stop()
 
 
+def _position_field(position: dict, field: str):
+    """Read a position field that decides what order goes out. Never guess.
+
+    A missing field means we do not know the position — the honest move is
+    to stop, not to pick a plausible value and trade on it.
+    """
+    if field not in position:
+        st.error(f"Position is missing {field!r} — refusing to guess: {position}")
+        st.stop()
+    return position[field]
+
+
 def _market_symbol(market_id: int) -> str:
     return _market_field(market_id, "symbol")
 
@@ -215,7 +235,9 @@ def _ticks_to_price(ticks: int, market_id: int) -> float:
 
 
 def _price_to_ticks(price: float, market_id: int) -> int:
-    return int(price * (10 ** _price_decimals(market_id)))
+    # round(), never int(): scaling a float lands just under the integer
+    # (0.29 * 100 == 28.999999999999996), and int() truncates that to 28.
+    return round(price * (10 ** _price_decimals(market_id)))
 
 
 def _ticks_to_size(ticks: int, market_id: int) -> float:
@@ -223,7 +245,9 @@ def _ticks_to_size(ticks: int, market_id: int) -> float:
 
 
 def _size_to_ticks(size: float, market_id: int) -> int:
-    return int(size * (10 ** _size_decimals(market_id)))
+    # See _price_to_ticks. Truncating here under-closes a position and
+    # leaves dust behind: 0.29 would go out as 0.28.
+    return round(size * (10 ** _size_decimals(market_id)))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -389,9 +413,13 @@ with tab1:
         else:
             for p in open_positions:
                 pos_size = float(p.get("position", 0))
-                pos_market = p.get("market_id", 0)
+                # market_id and sign decide which market and which side the
+                # close order goes to. A default here is not a fallback, it
+                # is a wrong order: market_id 0 would aim at ETH, sign 1
+                # would sell a short. Same rule as the decimals.
+                pos_market = _position_field(p, "market_id")
+                pos_sign = _position_field(p, "sign")
                 pos_symbol = p.get("symbol", str(pos_market))
-                pos_sign = p.get("sign", 1)
                 # Close = trade against the position: long (sign > 0) → sell.
                 close_side = pos_sign > 0
 

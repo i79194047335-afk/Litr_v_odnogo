@@ -492,6 +492,17 @@ strategy. Take-exit is the only current component with stable edge.
   leaks are an epidemic. On moving to real keys (even testnet): keys in
   .env only, never in code; gitleaks is installed but verify by hand.
   Real money only after confirmed edge AND testnet survival.
+- **THE PANEL HAS NO AUTHENTICATION AND IT TRADES.** Streamlit binds to
+  every interface by default (`server.address` unset => 0.0.0.0). This VPS
+  has a public IP and **no firewall** (iptables INPUT policy ACCEPT, zero
+  rules), so the default publishes a working trading UI to the open
+  internet. On 2026-07-17 it did exactly that for ~2 hours — Claude handed
+  Ivan `streamlit run ... --server.port 8501` without thinking about the
+  bind address, and only a later review caught it. `.streamlit/config.toml`
+  now pins `address = "127.0.0.1"`; reach the panel over an SSH tunnel.
+  Verify with `ss -ltnp | grep 8501` — it must read `127.0.0.1:8501`, never
+  `*:8501`. A CLI `--server.address` overrides the file silently. **Before
+  mainnet this needs real auth, or the panel does not go near real keys.**
 
 ## Anti-patterns — do NOT repeat
 
@@ -1111,8 +1122,21 @@ git add -A && git commit -m "..." && git push
 # if the API key went stale, this says so in one line)
 python -m src.live.connect_testnet
 
-# step 2: the panel
-streamlit run src/live/panel.py --server.port 8501
+# step 2: the panel — loopback only, reach it over an SSH tunnel.
+# .streamlit/config.toml pins server.address to 127.0.0.1. Do NOT pass
+# --server.address, and do NOT "just for a minute" bind 0.0.0.0: the panel
+# has no auth and trades. On the VPS:
+streamlit run src/live/panel.py
+# then from the laptop, separate terminal:
+#     ssh -N -L 8501:127.0.0.1:8501 root@<vps>
+#     open http://localhost:8501
+
+# confirm it is not exposed (must show 127.0.0.1:8501, never *:8501)
+ss -ltnp | grep 8501
+
+# kill it by port — never `pkill -f streamlit`, that matches any command
+# line containing the word, including your own shell one-liner
+fuser -k 8501/tcp
 
 # which api_key_index does the key in .env belong to? (they go stale)
 python -c "
