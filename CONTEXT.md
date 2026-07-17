@@ -558,8 +558,9 @@ branch `feature/testnet-step1-connect`, pushed):**
 
 1. Close Position sent the **wrong side** (`close_side = pos_sign < 0` →
    long closed with a BUY). `reduce_only` had the exchange reject it, so
-   the panel showed a green tx hash while nothing happened. The account's
-   two shorts were structurally uncloseable from the UI.
+   the panel showed a green tx hash while nothing happened. Nothing could
+   be closed *from our panel* — Lighter's own UI was unaffected and is
+   where Ivan actually manages positions.
 2. Close Position priced its market order at **0** (`# will be overridden`
    — nothing did). IOC at price 0 → cancelled on arrival.
 3. The Orders tab **crashed on any live order** — SDK returns price/size as
@@ -872,12 +873,17 @@ Key events from the current chat, most recent first:
    it was built on. If so, the two event-loop fix commits only cured the
    first render, and the fix is to cache the loop too. Unresolved: needs a
    human to run the panel and click twice. Claude cannot click.
-6. **Are Ivan's testnet BTC/SOL shorts wanted?** (new, 2026-07-17) Account
-   306 carries BTC 1.57063 @ 64155.8 and SOL 771.278 @ 75.789. The broken
-   Close button could never have closed them, so they may simply be stuck
-   rather than intended. Left untouched deliberately. Worth asking before
-   any cleanup — and note the SOL one sits in the market whose decimals
-   were wrong.
+6. ~~Are Ivan's testnet BTC/SOL shorts stuck?~~ — **not a question; asked
+   and answered 2026-07-17.** Ivan opened both by hand in Lighter's own web
+   UI, deliberately, and manages them there. Claude had inferred "the
+   panel's Close button can't close these, so maybe they're stuck" — a
+   guess built on the unstated assumption that the panel is the only way
+   Ivan touches the account, when in fact he had been working in the
+   exchange's own UI all along. Recorded because the assumption is likely
+   to recur: **the panel is one of several hands on this account, not the
+   only one.** Any future "the account state looks odd" reasoning should
+   start by asking Ivan what he did in the Lighter UI. Both positions stay
+   untouched.
 
 ## Next steps (priority order)
 
