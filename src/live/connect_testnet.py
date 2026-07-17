@@ -21,8 +21,25 @@ from lighter import SignerClient  # noqa: E402
 
 TESTNET_URL = "https://testnet.zklighter.elliot.ai"
 ACCOUNT_INDEX = 306        # from testnet web UI "Your Account Index"
-API_KEY_INDEX = 0           # from testnet web UI "API Key Index"
 ETH_MARKET = 0              # ETH-PERP
+
+
+def _api_key_index() -> int:
+    """Which API key slot .env's key belongs to. No default on purpose.
+
+    Slot 0 belongs to the Lighter web UI ("0 (Desktop)"), which re-registers
+    it and silently invalidates a bot's key — twice on 2026-07-17, when this
+    was hardcoded to 0.
+    """
+    raw = os.getenv("TESTNET_API_KEY_INDEX")
+    if raw is None:
+        print(
+            "ERROR: TESTNET_API_KEY_INDEX not set in .env — refusing to guess "
+            "a slot. Use the index you issued the key under (not 0 — that one "
+            "belongs to the Lighter web UI and gets re-registered under you)."
+        )
+        sys.exit(1)
+    return int(raw)
 
 
 def _account_url(base_url: str, account_index: int) -> str:
@@ -53,12 +70,14 @@ async def main():
     if private_key.startswith("0x"):
         private_key = private_key[2:]
 
+    api_key_index = _api_key_index()
+
     # ── connect ────────────────────────────────────────────────────────
     print(f"Connecting to {TESTNET_URL} ...")
     client = SignerClient(
         url=TESTNET_URL,
         account_index=ACCOUNT_INDEX,
-        api_private_keys={API_KEY_INDEX: private_key},
+        api_private_keys={api_key_index: private_key},
     )
 
     err = client.check_client()
@@ -138,7 +157,7 @@ async def main():
 
     # ── generate auth token for private API calls ──────────────────────
     auth_token, auth_err = client.create_auth_token_with_expiry(
-        api_key_index=API_KEY_INDEX,
+        api_key_index=api_key_index,
     )
     if auth_err:
         print(f"ERROR generating auth token: {auth_err}")

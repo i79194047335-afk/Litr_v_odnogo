@@ -21,9 +21,31 @@ from lighter import SignerClient  # noqa: E402
 # ── config ────────────────────────────────────────────────────────────────
 TESTNET_URL = "https://testnet.zklighter.elliot.ai"
 ACCOUNT_INDEX = 306
-API_KEY_INDEX = 0
 ETH_MARKET = 0  # ETH-PERP
 BTC_MARKET = 1  # BTC-PERP
+
+
+def _api_key_index() -> int:
+    """Which API key slot .env's key belongs to. No default on purpose.
+
+    Slot 0 belongs to the Lighter web UI ("0 (Desktop)"), which re-registers
+    it and silently invalidates a bot's key. Defaulting to 0 is how this
+    file lost its key to the browser twice on 2026-07-17.
+
+    Raises rather than calling st.error: this runs before set_page_config,
+    where Streamlit commands are not allowed yet.
+    """
+    raw = os.getenv("TESTNET_API_KEY_INDEX")
+    if raw is None:
+        raise RuntimeError(
+            "TESTNET_API_KEY_INDEX not set in .env — refusing to guess a slot. "
+            "Use the index you issued the key under (not 0 — that one belongs "
+            "to the Lighter web UI and gets re-registered under you)."
+        )
+    return int(raw)
+
+
+API_KEY_INDEX = _api_key_index()
 
 # Taker orders are IOC: priced exactly at top-of-book they simply don't fill
 # if the market moves a tick.  This is the acceptable-price buffer.
