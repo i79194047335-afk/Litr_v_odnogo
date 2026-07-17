@@ -1,0 +1,16 @@
+# The panel has NO authentication and can place, cancel and close real
+# orders. Streamlit's default binds to every interface (server.address
+# unset => 0.0.0.0); this VPS has a public IP and no firewall (iptables
+# INPUT policy ACCEPT, no rules), so the default published a trading UI to
+# the open internet. It did, on 2026-07-17, for as long as the panel ran.
+#
+# Loopback only. Reach it through an SSH tunnel from your laptop:
+#     ssh -N -L 8501:127.0.0.1:8501 root@<vps>
+#     then open http://localhost:8501
+#
+# Do not "temporarily" pass --server.address 0.0.0.0 to skip the tunnel.
+# The CLI flag overrides this file silently, and the panel trades.
+[server]
+address = "127.0.0.1"
+port = 8501
+headless = true
