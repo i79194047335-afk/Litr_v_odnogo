@@ -20,8 +20,16 @@ load_dotenv()
 from lighter import SignerClient  # noqa: E402
 
 TESTNET_URL = "https://testnet.zklighter.elliot.ai"
-ACCOUNT_INDEX = 306        # from testnet web UI "Your Account Index"
 ETH_MARKET = 0              # ETH-PERP
+
+
+def _env_int(name: str, hint: str) -> int:
+    """Read a required int from .env. No default — a wrong guess here trades."""
+    raw = os.getenv(name)
+    if raw is None:
+        print(f"ERROR: {name} not set in .env — refusing to guess. {hint}")
+        sys.exit(1)
+    return int(raw)
 
 
 def _api_key_index() -> int:
@@ -31,15 +39,45 @@ def _api_key_index() -> int:
     it and silently invalidates a bot's key — twice on 2026-07-17, when this
     was hardcoded to 0.
     """
-    raw = os.getenv("TESTNET_API_KEY_INDEX")
-    if raw is None:
-        print(
-            "ERROR: TESTNET_API_KEY_INDEX not set in .env — refusing to guess "
-            "a slot. Use the index you issued the key under (not 0 — that one "
-            "belongs to the Lighter web UI and gets re-registered under you)."
-        )
-        sys.exit(1)
-    return int(raw)
+    return _env_int(
+        "TESTNET_API_KEY_INDEX",
+        "Use the index you issued the key under (not 0 — that one belongs to "
+        "the Lighter web UI and gets re-registered under you).",
+    )
+
+
+def _account_index() -> int:
+    return _env_int(
+        "TESTNET_ACCOUNT_INDEX", "It is shown in the testnet UI as your account index."
+    )
+
+
+async def _price_decimals(market_id: int) -> int:
+    """Read price scaling from the exchange — never hardcode it.
+
+    The panel hardcoded these once and drifted (SOL 2/4 vs a real 3/3),
+    sending orders at 1/10 the price. Same rule applies here.
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{TESTNET_URL}/api/v1/orderBooks") as resp:
+            resp.raise_for_status()
+            data = await resp.json()
+    for ob in data.get("order_books", []):
+        if int(ob["market_id"]) == market_id:
+            return int(ob["supported_price_decimals"])
+    print(f"ERROR: exchange does not describe market {market_id} — refusing to guess.")
+    sys.exit(1)
+
+
+def _str_to_ticks(s: str, decimals: int) -> int:
+    """API decimal string ("1846.57") -> integer ticks.
+
+    Not s.replace(".", ""): that silently assumes the exchange zero-pads to
+    exactly `decimals` places. It does today (322/322 order-book values
+    checked 2026-07-17), but the guarantee is undocumented — "1846.5" would
+    come out as 18465 instead of 184650, and far_price below is a real order.
+    """
+    return round(float(s) * (10 ** decimals))
 
 
 def _account_url(base_url: str, account_index: int) -> str:
@@ -49,16 +87,6 @@ def _account_url(base_url: str, account_index: int) -> str:
     the API rejects (20001 invalid param).  The actual API expects `by=index`.
     """
     return f"{base_url}/api/v1/account?by=index&value={account_index}"
-
-
-def _format_price(ticks: int) -> str:
-    """Convert integer price ticks to a dollar string (price_decimals=2)."""
-    return f"${ticks / 100:,.2f}"
-
-
-def _format_size(ticks: int) -> str:
-    """Convert integer size ticks to ETH string (size_decimals=4)."""
-    return f"{ticks / 10_000:.4f} ETH"
 
 
 async def main():
@@ -71,12 +99,13 @@ async def main():
         private_key = private_key[2:]
 
     api_key_index = _api_key_index()
+    account_index = _account_index()
 
     # ── connect ────────────────────────────────────────────────────────
     print(f"Connecting to {TESTNET_URL} ...")
     client = SignerClient(
         url=TESTNET_URL,
-        account_index=ACCOUNT_INDEX,
+        account_index=account_index,
         api_private_keys={api_key_index: private_key},
     )
 
@@ -88,9 +117,9 @@ async def main():
     print("✓ Client check passed (API key accepted by testnet)")
 
     # ── read account (direct HTTP — SDK has a `by=account_index` vs `by=index` bug) ──
-    print(f"\n─── Account {ACCOUNT_INDEX} ───")
+    print(f"\n─── Account {account_index} ───")
     async with aiohttp.ClientSession() as session:
-        async with session.get(_account_url(TESTNET_URL, ACCOUNT_INDEX)) as resp:
+        async with session.get(_account_url(TESTNET_URL, account_index)) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 accts = data.get("accounts", [])
@@ -119,11 +148,12 @@ async def main():
 
     # ── order book snapshot ────────────────────────────────────────────
     print(f"\n─── ETH-PERP (market {ETH_MARKET}) Order Book ───")
+    price_decimals = await _price_decimals(ETH_MARKET)
     ob = await client.order_api.order_book_orders(market_id=ETH_MARKET, limit=1)
     best_bid = 0
     if ob.bids and ob.asks:
-        best_bid = int(ob.bids[0].price.replace(".", ""))
-        best_ask = int(ob.asks[0].price.replace(".", ""))
+        best_bid = _str_to_ticks(ob.bids[0].price, price_decimals)
+        best_ask = _str_to_ticks(ob.asks[0].price, price_decimals)
         print(f"  Best bid: {ob.bids[0].price}  ({best_bid} ticks)")
         print(f"  Best ask: {ob.asks[0].price}  ({best_ask} ticks)")
     else:
@@ -132,7 +162,7 @@ async def main():
     # ── place a far-away limit BUY ─────────────────────────────────────
     # ETH: size_decimals=4 → 0.01 ETH = 100 ticks. price_decimals=2.
     # Place at ~10% below market → unlikely to fill on a quiet testnet.
-    far_price = int(best_bid * 0.9) if best_bid else 180_000  # ~$1800
+    far_price = round(best_bid * 0.9) if best_bid else 180_000  # ~$1800
     size = 100  # 0.01 ETH
     client_id = int(time.time() * 1000) % 2**31  # unique per run
 
@@ -168,7 +198,7 @@ async def main():
     await asyncio.sleep(0.5)  # let it land
     active = await client.order_api.account_active_orders(
         authorization=auth_token,
-        account_index=ACCOUNT_INDEX,
+        account_index=account_index,
     )
     our_order = None
     for o in getattr(active, "orders", []) or []:
@@ -209,7 +239,7 @@ async def main():
     await asyncio.sleep(0.5)
     active2 = await client.order_api.account_active_orders(
         authorization=auth_token,
-        account_index=ACCOUNT_INDEX,
+        account_index=account_index,
     )
     still_there = False
     for o in getattr(active2, "orders", []) or []:

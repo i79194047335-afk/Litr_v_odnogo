@@ -28,9 +28,20 @@ from lighter import SignerClient  # noqa: E402
 
 # ── config ────────────────────────────────────────────────────────────────
 TESTNET_URL = "https://testnet.zklighter.elliot.ai"
-ACCOUNT_INDEX = 306
 ETH_MARKET = 0  # ETH-PERP
 BTC_MARKET = 1  # BTC-PERP
+
+
+def _env_int(name: str, hint: str) -> int:
+    """Read a required int from .env. No default — see _api_key_index.
+
+    Raises rather than calling st.error: this runs before set_page_config,
+    where Streamlit commands are not allowed yet.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        raise RuntimeError(f"{name} not set in .env — refusing to guess. {hint}")
+    return int(raw)
 
 
 def _api_key_index() -> int:
@@ -43,21 +54,30 @@ def _api_key_index() -> int:
     Raises rather than calling st.error: this runs before set_page_config,
     where Streamlit commands are not allowed yet.
     """
-    raw = os.getenv("TESTNET_API_KEY_INDEX")
-    if raw is None:
-        raise RuntimeError(
-            "TESTNET_API_KEY_INDEX not set in .env — refusing to guess a slot. "
-            "Use the index you issued the key under (not 0 — that one belongs "
-            "to the Lighter web UI and gets re-registered under you)."
-        )
-    return int(raw)
+    return _env_int(
+        "TESTNET_API_KEY_INDEX",
+        "Use the index you issued the key under (not 0 — that one belongs to "
+        "the Lighter web UI and gets re-registered under you).",
+    )
 
 
 API_KEY_INDEX = _api_key_index()
+ACCOUNT_INDEX = _env_int(
+    "TESTNET_ACCOUNT_INDEX", "It is shown in the testnet UI as your account index."
+)
 
 # Taker orders are IOC: priced exactly at top-of-book they simply don't fill
 # if the market moves a tick.  This is the acceptable-price buffer.
 MAX_SLIPPAGE = 0.005  # 0.5%
+
+# TODO(mainnet): one click = one live taker order. No confirm step, no
+# double-click guard, no size ceiling. Deliberate for testnet — the point is
+# to touch real fills quickly, and the worst case is play money. It is NOT
+# acceptable against real funds: a stray click closes a position at market.
+# Before this panel ever points at mainnet it needs, at minimum, a confirm
+# dialog on market/close, a max notional per order, and authentication (see
+# .streamlit/config.toml — today the only thing between this UI and the
+# internet is an SSH tunnel).
 
 st.set_page_config(page_title="Lighter Panel", page_icon="📊", layout="wide")
 
@@ -230,18 +250,23 @@ def _size_decimals(market_id: int) -> int:
     return _market_field(market_id, "size_decimals")
 
 
-def _ticks_to_price(ticks: int, market_id: int) -> float:
-    return ticks / (10 ** _price_decimals(market_id))
+def _api_decimal(s: str) -> float:
+    """Read an API decimal string ("1846.57"). It is already scaled.
+
+    The two tabs used to disagree about this: Orders called float(o.price),
+    while Order Book round-tripped the same string through ticks
+    (int(s.replace(".", "")) then / 10**decimals). Those agree only while
+    the exchange zero-pads to exactly `decimals` places AND our decimals
+    match it — two unstated assumptions to display a number the API already
+    formatted. One representation, one helper.
+    """
+    return float(s)
 
 
 def _price_to_ticks(price: float, market_id: int) -> int:
     # round(), never int(): scaling a float lands just under the integer
     # (0.29 * 100 == 28.999999999999996), and int() truncates that to 28.
     return round(price * (10 ** _price_decimals(market_id)))
-
-
-def _ticks_to_size(ticks: int, market_id: int) -> float:
-    return ticks / (10 ** _size_decimals(market_id))
 
 
 def _size_to_ticks(size: float, market_id: int) -> int:
@@ -470,9 +495,8 @@ with tab2:
         if orders:
             rows = []
             for o in orders:
-                # SDK types these as strings ("1800.50"), already scaled.
-                price = float(o.price)
-                size = float(o.remaining_base_amount)
+                price = _api_decimal(o.price)
+                size = _api_decimal(o.remaining_base_amount)
                 side = "SELL" if o.is_ask else "BUY"
                 rows.append(
                     {
@@ -541,12 +565,8 @@ with tab3:
             st.markdown("**Asks (Sells)**")
             ask_rows = []
             for o in ob.asks[:ob_depth]:
-                price = _ticks_to_price(
-                    int(o.price.replace(".", "")), ob_market
-                )
-                size = _ticks_to_size(
-                    int(o.remaining_base_amount.replace(".", "")), ob_market
-                )
+                price = _api_decimal(o.price)
+                size = _api_decimal(o.remaining_base_amount)
                 ask_rows.append(
                     {"Price": f"${price:,.2f}", "Size": f"{size:,.4f}"}
                 )
@@ -559,12 +579,8 @@ with tab3:
             st.markdown("**Bids (Buys)**")
             bid_rows = []
             for o in ob.bids[:ob_depth]:
-                price = _ticks_to_price(
-                    int(o.price.replace(".", "")), ob_market
-                )
-                size = _ticks_to_size(
-                    int(o.remaining_base_amount.replace(".", "")), ob_market
-                )
+                price = _api_decimal(o.price)
+                size = _api_decimal(o.remaining_base_amount)
                 bid_rows.append(
                     {"Price": f"${price:,.2f}", "Size": f"{size:,.4f}"}
                 )
@@ -575,12 +591,8 @@ with tab3:
 
         spread_pct = 0
         if ob.bids and ob.asks:
-            best_bid = _ticks_to_price(
-                int(ob.bids[0].price.replace(".", "")), ob_market
-            )
-            best_ask = _ticks_to_price(
-                int(ob.asks[0].price.replace(".", "")), ob_market
-            )
+            best_bid = _api_decimal(ob.bids[0].price)
+            best_ask = _api_decimal(ob.asks[0].price)
             spread_pct = ((best_ask - best_bid) / best_bid) * 100
             st.caption(
                 f"Spread: ${best_ask - best_bid:,.2f}  ({spread_pct:.4f}%)"
