@@ -434,11 +434,40 @@ strategy. Take-exit is the only current component with stable edge.
 - **TypeScript/node.js SDK also exists** — some functionality may live
   there, not in Python. Check coverage gaps before working around missing
   bits.
-- **Latency**: VPS in Frankfurt, Lighter datacenter in Oceania. Real order
-  round-trip ~600-1200ms (not the advertised 300ms); sub-10ms matching is
-  theory, "not in practice, especially when the market's hot". Probably
-  tolerable for range-bar scalping (not HFT), but measuring real testnet
-  round-trip is an early task.
+- **Latency — MEASURED 2026-07-17, better than feared**: 243 ms to place a
+  post-only limit, ~500 ms for a market order (open and close), 330 ms for
+  a REST account read. The forum's ~600-1200 ms was pessimistic. Caveat:
+  measured from the box the panel runs on during that session, and on a
+  quiet testnet — not re-measured from Frankfurt under load, and "not in
+  practice when the market's hot" still stands as a warning. Tolerable for
+  range-bar scalping (not HFT).
+- **Scaling (price/size decimals) MUST be read from `/api/v1/orderBooks`,
+  never hardcoded.** Verified live 2026-07-17: ETH(0) 2/4, BTC(1) 1/5,
+  SOL(2) **3/3**. `panel.py` had SOL hardcoded as 2/4 — every SOL order
+  would have gone out at 1/10 the intended price and 10x the intended size
+  — and listed markets 24/92 that testnet does not have. Testnet has 5
+  markets: ETH(0), BTC(1), SOL(2) perps, plus ETH/USDC(2048) and
+  LIT/USDC(2049) spot. `min_quote_amount` is $10 on all perps.
+- **Position `sign`**: `+1` = LONG, `-1` = SHORT (verified against real
+  open positions). Closing a position is therefore `is_ask = (sign > 0)`.
+- **String-typed fields**: `Order.price`, `Order.remaining_base_amount` and
+  the position fields (`position`, `avg_entry_price`, `unrealized_pnl`)
+  come back as **strings, already scaled** (`"1846.57"`). Use `float()` —
+  do not divide by ticks. The SDK's own models declare these `StrictStr`.
+- **Market orders are IOC.** Priced at exactly top-of-book they do not fill
+  on a one-tick move. Use `create_market_order_limited_slippage`, which
+  reads top-of-book itself and applies slippage in the correct direction —
+  don't hand-roll the price.
+- **API keys go stale.** On 2026-07-17 the key in `.env` matched nothing on
+  account 306 (registered indexes were 0 and 4, neither ours), blocking all
+  signing until Ivan replaced it. `check_client()` names this precisely
+  ("private key does not match the one on Lighter") — run it before
+  concluding anything else is broken. Confirm which index a key belongs to
+  by calling `check_client()` per index; `/api/v1/apikeys` lists the
+  registered pubkeys.
+- **`SignerClient.__init__` needs a running event loop** (it builds an
+  aiohttp connector). Constructing it from sync code raises "no running
+  event loop" — the root of the panel's two event-loop fix commits.
 - **Reversal-close on a live DEX is an execution-tech-debt source**: slow
   network, queued orders, bot may count old orders as filled when they're
   not. Our backtest reversal-exit problems may ALSO be executional live —
@@ -514,6 +543,55 @@ strategy. Take-exit is the only current component with stable edge.
   `git status` on the VPS. **Standing rule going forward: start every
   new session with a fresh `git clone` + `pytest` run, before reading
   any chat summary or acting on this file's own "done" claims.**
+
+## Session log (2026-07-17)
+
+Testnet track, steps 1-2 reviewed and repaired. Ivan asked Claude to audit
+the live panel against spec, believing DeepSeek had written it — the git
+trailers said otherwise: all five `live:` commits are Claude's. DeepSeek's
+work in this repo is `bias_audit.py` / `no_reversal_variant.py`. So this
+was Claude reviewing Claude, which is exactly the case where the review has
+to be adversarial rather than confirmatory.
+
+**Four bugs found in `panel.py`, all fixed and verified live (`0b08c66`,
+branch `feature/testnet-step1-connect`, pushed):**
+
+1. Close Position sent the **wrong side** (`close_side = pos_sign < 0` →
+   long closed with a BUY). `reduce_only` had the exchange reject it, so
+   the panel showed a green tx hash while nothing happened. The account's
+   two shorts were structurally uncloseable from the UI.
+2. Close Position priced its market order at **0** (`# will be overridden`
+   — nothing did). IOC at price 0 → cancelled on arrival.
+3. The Orders tab **crashed on any live order** — SDK returns price/size as
+   already-scaled strings, code divided them by ticks. Hidden by an empty
+   order list.
+4. Per-market **decimals were hardcoded and had drifted** — SOL 2/4 vs a
+   real 3/3 (1/10 price, 10x size on every SOL order). Now read from
+   `/api/v1/orderBooks`; on an undescribed market the panel stops rather
+   than defaulting.
+
+**The pattern worth remembering: every one of these failed silently.**
+`reduce_only` turned a wrong side into a quiet no-op, an empty list hid a
+crash, a default hid the SOL error. The fixes remove the muffling too — the
+panel now refuses to guess where it used to fall back.
+
+**Verification method** (worth repeating): a scratchpad script mirrored the
+panel's call sites literally, traded 0.01 ETH round-trip, and asserted the
+OLD code failed *before* asserting the new code worked — the old `str / int`
+TypeError and the inverted side were both reproduced live, so the fixes are
+answers to demonstrated failures, not to plausible stories. Ivan's
+pre-existing BTC/SOL shorts were guarded against and untouched; cost of the
+whole exercise was $0.0035 in taker fees.
+
+**Two process errors on Claude's side, both recorded above where they'll be
+read:** (a) claimed twice it had no VPS access, quoting this file's stale
+"What Claude CANNOT do" section instead of testing it — one `curl`
+disproved it; (b) filed the hardcoded decimals as "tech debt, later" during
+the static review, when it was in fact the most severe live bug of the four.
+Severity guessed from the armchair was wrong; the API said so in one call.
+
+Round-trip latency measured as a by-product — see the gotchas section. It
+closes an open item that had been sitting since 2026-07-08.
 
 ## Session log (2026-07-06)
 
@@ -787,10 +865,46 @@ Key events from the current chat, most recent first:
    bug. No further 0xArchive downloads planned.
 4. **Cosmetic**: `RuntimeError: Event loop stopped before Future completed`
    at systemd stop. Not a data loss, just noisy in logs. Not fixed yet.
+5. **Does `_LOOP` survive a Streamlit rerun?** (new, 2026-07-17) `panel.py`
+   creates the persistent loop at module level, but Streamlit re-executes
+   the script top-to-bottom on every interaction, while `@st.cache_resource`
+   keeps the `SignerClient` — whose aiohttp connector is bound to the loop
+   it was built on. If so, the two event-loop fix commits only cured the
+   first render, and the fix is to cache the loop too. Unresolved: needs a
+   human to run the panel and click twice. Claude cannot click.
+6. **Are Ivan's testnet BTC/SOL shorts wanted?** (new, 2026-07-17) Account
+   306 carries BTC 1.57063 @ 64155.8 and SOL 771.278 @ 75.789. The broken
+   Close button could never have closed them, so they may simply be stuck
+   rather than intended. Left untouched deliberately. Worth asking before
+   any cleanup — and note the SOL one sits in the market whose decimals
+   were wrong.
 
 ## Next steps (priority order)
 
-As of the 2026-07-06 session (trailing redesign now done):
+**Live/testnet track (as of 2026-07-17)** — runs in parallel with the
+backtest list below; real money still gated on backtest edge + testnet.
+
+0. **Step 2 is not done.** Its spec says "buttons, position table, balance,
+   **fills**" — fills were never built. The Orders tab shows resting
+   orders, which is a different thing: nothing in the panel shows the price
+   a trade actually executed at. On a track whose whole purpose is to see
+   real execution, that is the wrong thing to be missing. Build it before
+   calling step 2 complete or moving to step 3.
+1. **Have a human run the panel and click twice** — settles open question 5
+   (`_LOOP` across reruns), which no amount of reading will.
+2. **Instrument round-trip in the panel itself.** One-off numbers exist now
+   (243/500 ms, see gotchas); a running measurement under real use is what
+   tells us whether range-bar scalping survives on this venue.
+3. **Consider a typed wrapper over the SDK before step 3 (the contract).**
+   Every 2026-07-17 bug lived where the panel called the SDK directly and
+   trusted its shapes; the code that bypassed the SDK (direct-HTTP account
+   read) was the code that worked. Unifying strategy across backtest and
+   live on top of a leaky SDK, with no wrapper to pin types and scaling at
+   the boundary, invites the same class of bug into the strategy layer.
+
+**Backtest track**, as of the 2026-07-06 session (trailing redesign now
+done). NOTE: unchanged since 2026-07-08 — the scope expansion moved
+attention to the live track, not because these were resolved:
 
 1. ~~Trailing redesign~~ — **done 2026-07-06**. Swing-based
    (`trail_stop_swing`), merged to `main` (`e4752a4`), 174/174 passing.
@@ -865,6 +979,17 @@ src/
                costs.py                ✅ slice 4: fees + funding
                metrics.py              ✅ slice 5: bps/R stats, breakdowns
                run_backtest.py         ✅ slice 5: CLI runner, ties it all together
+               export_sample.py        ✅ diagnostic bar/trade export (2026-07-07)
+               bias_audit.py           ✅ DeepSeek: bias-regime audit (2026-07-07)
+               no_reversal_variant.py  ✅ DeepSeek: reversal-exit disabled variant
+  live/        connect_testnet.py      ✅ step 1: connect, place & cancel one order
+               panel.py                ⚠️  step 2: Streamlit panel. Order paths
+                                          fixed & verified live 2026-07-17
+                                          (0b08c66). MISSING: fills view (in
+                                          spec for step 2). UNVERIFIED: whether
+                                          `_LOOP` survives a Streamlit rerun —
+                                          needs a human to click twice.
+                                          No test coverage (203 suite skips it).
 data/ticks/    JSONL, mixed v1 (legacy) and v2 (post-2026-07-02)
 docs/
   ytc_scalper_skeleton.md              strategic breakdown of Beggs
@@ -885,8 +1010,13 @@ tests/
   test_metrics.py                      14 tests, passing
   test_run_backtest.py                 6 tests, passing
   test_swings.py                       11 tests, passing
-  -- total: 174, verified via fresh clone + pytest, 2026-07-06 (merge
-     e4752a4) --
+  test_export_sample.py                diagnostic export (2026-07-07)
+  test_bias_audit.py                   DeepSeek, Part A (2026-07-07)
+  test_no_reversal_variant.py          DeepSeek, Part B (2026-07-07)
+  -- total: 203, run on the VPS 2026-07-17. NOTE: nothing under src/live/
+     is covered — the panel's four 2026-07-17 bugs were all invisible to
+     this suite and were caught by reading the code and calling testnet,
+     not by pytest. A green suite says nothing about the live track. --
 ```
 .pre-commit-config.yaml                gitleaks local
 .github/workflows/gitleaks.yml         gitleaks server-side
@@ -940,6 +1070,41 @@ print(f'rows={len(tids)} unique={len(c)} dupes={dupes} ({100*dupes/len(tids):.3f
 
 # push workflow
 git add -A && git commit -m "..." && git push
+
+# ── live / testnet track ──────────────────────────────────────────────
+
+# step 1: connect, place & cancel one order (also the fastest health check —
+# if the API key went stale, this says so in one line)
+python -m src.live.connect_testnet
+
+# step 2: the panel
+streamlit run src/live/panel.py --server.port 8501
+
+# which api_key_index does the key in .env belong to? (they go stale)
+python -c "
+import asyncio, os
+from dotenv import load_dotenv; load_dotenv()
+from lighter import SignerClient
+pk = os.getenv('TESTNET_PRIVATE_KEY','').removeprefix('0x')
+async def probe():
+    for idx in (0, 1, 2, 3, 4):
+        try:
+            c = SignerClient(url='https://testnet.zklighter.elliot.ai',
+                             account_index=306, api_private_keys={idx: pk})
+            print(idx, c.check_client() or 'OK - key matches')
+            await c.close()
+        except Exception as e:
+            print(idx, 'EXC', str(e)[:60])
+asyncio.run(probe())"
+
+# pubkeys actually registered on the account
+curl -s "https://testnet.zklighter.elliot.ai/api/v1/apikeys?account_index=306&api_key_index=255"
+
+# account / positions (note by=index, NOT by=account_index)
+curl -s "https://testnet.zklighter.elliot.ai/api/v1/account?by=index&value=306"
+
+# per-market decimals — the source of truth, never hardcode these
+curl -s "https://testnet.zklighter.elliot.ai/api/v1/orderBooks"
 ```
 
 ## User profile (important to keep in mind)
@@ -960,7 +1125,22 @@ git add -A && git commit -m "..." && git push
 
 ## What Claude CANNOT do
 
+**Read the surface first.** This list was written for Claude in the **web
+chat**, where all of it is true. In a **Claude Code** session on the VPS
+none of the first three hold: it has a shell, the repo, `.venv`, `.env`,
+and the network. Verified 2026-07-17 — it reached testnet directly (~330 ms
+on a REST GET), placed and cancelled real orders, and closed a position.
+Check the capability instead of quoting this list at the user; on
+2026-07-17 Claude told Ivan "run it yourself, I have no access" twice
+before a single `curl` disproved it.
+
+In the **web chat**:
 - No VPS access — all commands go through the user.
 - No live GitHub repo access — the user brings a snapshot.
 - Cannot create the GitHub repo under the user's account.
+
+In **both**:
 - No long-term memory across chats, hence this file.
+- Cannot click a Streamlit UI. Panel code paths can be exercised by calling
+  them directly, but rendering and the event-loop behaviour need a human to
+  run `streamlit run` and click twice.
