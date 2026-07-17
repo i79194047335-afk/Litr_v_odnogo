@@ -458,13 +458,29 @@ strategy. Take-exit is the only current component with stable edge.
   on a one-tick move. Use `create_market_order_limited_slippage`, which
   reads top-of-book itself and applies slippage in the correct direction —
   don't hand-roll the price.
-- **API keys go stale.** On 2026-07-17 the key in `.env` matched nothing on
-  account 306 (registered indexes were 0 and 4, neither ours), blocking all
-  signing until Ivan replaced it. `check_client()` names this precisely
-  ("private key does not match the one on Lighter") — run it before
-  concluding anything else is broken. Confirm which index a key belongs to
-  by calling `check_client()` per index; `/api/v1/apikeys` lists the
-  registered pubkeys.
+- **API key slot 0 belongs to the Lighter web UI — never put a bot there.**
+  The UI lists it as "0 (Desktop)" and re-registers it, silently killing
+  whatever key you had in that slot. Both live scripts hardcoded 0 and lost
+  the key twice on 2026-07-17: it verified and traded, Ivan opened the
+  Lighter UI, and the next run failed with "private key does not match".
+  Two clients were fighting over one slot; it read like a bad paste, which
+  cost most of the debugging. The slot now comes from
+  `TESTNET_API_KEY_INDEX` in `.env` with **no default** (guessing 0 *is*
+  the bug). Currently 4. To reissue: Lighter UI -> API Keys -> Refresh on
+  **your** index — the private key shows **once**, copy it before clicking
+  anything else; a second Refresh invalidates what you just copied.
+- **API keys go stale, and `check_client()` says so in one line** ("private
+  key does not match the one on Lighter", with both pubkeys). Run
+  `python -m src.live.connect_testnet` before suspecting anything else —
+  it is the cheapest health check in the repo. `/api/v1/apikeys` lists what
+  is actually registered. Probe which slot a key belongs to with one
+  process **per index**: the Go signer is a process-global singleton and
+  indexes contaminate each other within one process (this produced a
+  misleading result on 2026-07-17).
+- **Ivan drives the account from the Lighter web UI too.** The panel is one
+  of several hands on account 306, not the only one. Account state changing
+  between runs (positions opened/closed, keys rotated) is usually him, not
+  a bug. Ask before theorising.
 - **`SignerClient.__init__` needs a running event loop** (it builds an
   aiohttp connector). Constructing it from sync code raises "no running
   event loop" — the root of the panel's two event-loop fix commits.
@@ -872,7 +888,11 @@ Key events from the current chat, most recent first:
    keeps the `SignerClient` — whose aiohttp connector is bound to the loop
    it was built on. If so, the two event-loop fix commits only cured the
    first render, and the fix is to cache the loop too. Unresolved: needs a
-   human to run the panel and click twice. Claude cannot click.
+   human to run the panel and click twice. Claude cannot click. Ivan's
+   2026-07-17 attempt never got that far — the panel died on the API key
+   before rendering (see the slot-0 gotcha). Its "Unclosed client session"
+   spam did confirm the script re-executes per rerun and that `st.stop()`
+   defeats `@st.cache_resource`, which is the premise of the question.
 6. ~~Are Ivan's testnet BTC/SOL shorts stuck?~~ — **not a question; asked
    and answered 2026-07-17.** Ivan opened both by hand in Lighter's own web
    UI, deliberately, and manages them there. Claude had inferred "the
