@@ -890,7 +890,9 @@ Key events from the current chat, most recent first:
    "Timeout context manager should be used inside a task". The loop is now
    cached like the client, so their lifetimes match. Reproduced outside
    Streamlit before fixing (client on loop A, called from loop B → the
-   identical error; loop A again → OK).
+   identical error; loop A again → OK), then **confirmed by Ivan in the
+   real panel — Refresh works repeatedly** (the repro only proved the
+   mechanism; the click proved the panel).
    **Worth keeping:** commits d59bef1 and a7d183f both claimed to have
    "fixed the event loop" and neither could have — they addressed
    construction on the *first* render and never touched the lifetime
