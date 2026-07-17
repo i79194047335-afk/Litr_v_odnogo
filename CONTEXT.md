@@ -882,17 +882,21 @@ Key events from the current chat, most recent first:
    bug. No further 0xArchive downloads planned.
 4. **Cosmetic**: `RuntimeError: Event loop stopped before Future completed`
    at systemd stop. Not a data loss, just noisy in logs. Not fixed yet.
-5. **Does `_LOOP` survive a Streamlit rerun?** (new, 2026-07-17) `panel.py`
-   creates the persistent loop at module level, but Streamlit re-executes
-   the script top-to-bottom on every interaction, while `@st.cache_resource`
-   keeps the `SignerClient` — whose aiohttp connector is bound to the loop
-   it was built on. If so, the two event-loop fix commits only cured the
-   first render, and the fix is to cache the loop too. Unresolved: needs a
-   human to run the panel and click twice. Claude cannot click. Ivan's
-   2026-07-17 attempt never got that far — the panel died on the API key
-   before rendering (see the slot-0 gotcha). Its "Unclosed client session"
-   spam did confirm the script re-executes per rerun and that `st.stop()`
-   defeats `@st.cache_resource`, which is the premise of the question.
+5. ~~Does `_LOOP` survive a Streamlit rerun?~~ — **no, and fixed 2026-07-17
+   (`d2d648e`).** It did not: Streamlit re-executes the script per rerun, so
+   the module-level `asyncio.new_event_loop()` built a new loop per click
+   while `@st.cache_resource` kept the first render's `SignerClient`, whose
+   aiohttp session stayed bound to the original loop. Second click died with
+   "Timeout context manager should be used inside a task". The loop is now
+   cached like the client, so their lifetimes match. Reproduced outside
+   Streamlit before fixing (client on loop A, called from loop B → the
+   identical error; loop A again → OK).
+   **Worth keeping:** commits d59bef1 and a7d183f both claimed to have
+   "fixed the event loop" and neither could have — they addressed
+   construction on the *first* render and never touched the lifetime
+   mismatch, which only shows up on the *second* interaction. A panel that
+   loads cleanly proves nothing; the bug lives one click deeper. Nothing in
+   the repo could have caught this — it took a human clicking twice.
 6. ~~Are Ivan's testnet BTC/SOL shorts stuck?~~ — **not a question; asked
    and answered 2026-07-17.** Ivan opened both by hand in Lighter's own web
    UI, deliberately, and manages them there. Claude had inferred "the
@@ -916,8 +920,10 @@ backtest list below; real money still gated on backtest edge + testnet.
    a trade actually executed at. On a track whose whole purpose is to see
    real execution, that is the wrong thing to be missing. Build it before
    calling step 2 complete or moving to step 3.
-1. **Have a human run the panel and click twice** — settles open question 5
-   (`_LOOP` across reruns), which no amount of reading will.
+1. ~~Have a human run the panel and click twice~~ — **done 2026-07-17**;
+   it found the `_LOOP` lifetime bug (open question 5), which no amount of
+   reading had. Keep the habit: after any panel change, click twice. The
+   first render is not evidence.
 2. **Instrument round-trip in the panel itself.** One-off numbers exist now
    (243/500 ms, see gotchas); a running measurement under real use is what
    tells us whether range-bar scalping survives on this venue.
