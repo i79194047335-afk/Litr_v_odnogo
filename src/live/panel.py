@@ -58,21 +58,38 @@ st.set_page_config(page_title="Lighter Panel", page_icon="📊", layout="wide")
 # async plumbing
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Streamlit runs its script synchronously — there is NO running event loop
-# during module execution or widget rendering.  The Lighter SDK creates an
-# aiohttp TCPConnector during SignerClient.__init__, which calls
-# asyncio.get_running_loop() and crashes.
+# Two constraints pull in opposite directions here.
 #
-# Fix: a single *persistent* event loop that lives for the lifetime of the
-# Streamlit process.  All async work (SDK construction + every API call)
-# runs on this loop via loop.run_until_complete().
+# 1. Streamlit runs its script synchronously — there is NO running event loop
+#    during module execution or widget rendering.  SignerClient.__init__
+#    builds an aiohttp TCPConnector, which needs one.  So we must own a loop
+#    and drive every async call through run_until_complete().
+#
+# 2. Streamlit re-executes this file top-to-bottom on EVERY rerun (any click).
+#    A module-level asyncio.new_event_loop() therefore makes a *new* loop per
+#    click — while @st.cache_resource keeps the SignerClient from the first
+#    render, whose aiohttp session is bound to the loop it was built on.
+#    aiohttp's timer then calls current_task() against its original loop, gets
+#    None, and the second click dies with "Timeout context manager should be
+#    used inside a task".  That is exactly what happened on 2026-07-17.
+#
+# So the loop must be cached the same way the client is: same lifetime, same
+# loop, or the client outlives the loop it belongs to.
+#
+# Known limit: @st.cache_resource is shared across browser sessions, and a
+# loop is not safe to drive from several threads at once.  Fine for a
+# single-operator panel; revisit if this is ever opened to two users.
 
-_LOOP = asyncio.new_event_loop()
+
+@st.cache_resource
+def _get_loop() -> asyncio.AbstractEventLoop:
+    """One event loop for the whole Streamlit process — see above."""
+    return asyncio.new_event_loop()
 
 
 def _run_async(coro):
-    """Run an async coroutine on the persistent loop (blocking)."""
-    return _LOOP.run_until_complete(coro)
+    """Run an async coroutine on the cached loop (blocking)."""
+    return _get_loop().run_until_complete(coro)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -94,7 +111,7 @@ def _get_client() -> SignerClient:
             api_private_keys={API_KEY_INDEX: pk},
         )
 
-    client = _LOOP.run_until_complete(_construct())
+    client = _run_async(_construct())
     err = client.check_client()
     if err:
         st.error(f"Client check failed: {err}")
