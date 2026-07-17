@@ -104,9 +104,20 @@ trailing=False (matching the baseline from prior diagnostic runs).
 
 **Removing reversal exits kills the strategy.** Session count drops from
 1,370 → 30 (in-sample) and 1,102 → 2 (out-of-sample).  Without reversal
-exits, positions that would have been closed by a bias flip instead hold
-until either take-profit or stop-loss.  The stop-loss fires on ~72% of
-trades (in-sample), dragging the overall expectancy deeply negative.
+exits, positions that would have been closed by a swing-structure break
+instead hold until either take-profit or stop-loss.  The stop-loss fires on
+~72% of trades (in-sample), dragging the overall expectancy deeply negative.
+
+> **Correction, 2026-07-10 (AUDIT item S3).** This paragraph originally said
+> those positions "would have been closed by a bias flip". That is wrong about
+> our own code: bias is an *entry* filter only. Nothing in `WFStrategy` exits
+> on a bias flip — the reversal exit fires on a swing-structure break with
+> acceptance (`_check_reversal_swing_mode`), or on a single opposite bar in
+> the legacy `exit_mode="bar"`. The rest of this document's numbers are
+> unaffected; only this sentence's mechanism was mis-stated. Do not build a
+> "bias hold-time filter on the exit" on the strength of it — there is no exit
+> to filter. A hold-time filter on the *entry* bias remains a live idea (see
+> Part A), and is a different change.
 
 **This does NOT mean reversal exits are "good."**  The prior session
 established that reversal exits are the main loss driver in the standard
@@ -123,6 +134,23 @@ Another candidate: the Beggs-acceptance hold-time filter already applied
 to the swing exit rule — require that the bias persists for N bars before
 a flip is actionable.  Both are empirical follow-ups, not settled
 conclusions.
+
+> **Follow-up, 2026-07-10.** The second candidate was built and measured:
+> `acceptance_bars` (how long a swing break must hold before the exit fires),
+> swept over 1/3/5 in `docs/ACCEPTANCE_SWEEP_2026-07-10.md`. **No setting is
+> positive.** Widening the window does not make losers recover; it holds them
+> until the 0-line stop catches them, and a stop costs ~4× an early reversal
+> exit (−12.4 vs −3.0 bps). Meanwhile the take population is completely
+> unaffected: ~222 trades at +9.75 bps, 100% win, identical at every setting.
+>
+> Together with Part B above, exit-rule tuning has now been shown twice to
+> only reshuffle *how* losing trades die, never to create winners. The
+> remaining live question is whether anything observable **before entry**
+> separates the ~222 winners from the ~1,000 losers — see AUDIT item 1b and
+> `diag_take_vs_rest.py`. The first candidate in this paragraph (a bias
+> hold-time filter) is still untested, but note it must act on the *entry*
+> bias: there is no bias-based exit in the code to filter (see the correction
+> above).
 
 **Caveat:** The OOS no-reversal run has only 2 sessions and 4 trades —
 essentially no trading activity.  This is consistent with the in-sample

@@ -187,3 +187,55 @@ def test_run_without_strategy():
     r.run([(100.0, 0), (101.5, 1_000)])
     assert len(r.bars) == 1
     assert r.n_ticks == 2
+
+
+# --- rolling range-size schedule (AUDIT item A4) -------------------------------
+
+from src.rangebars.rolling import DAY_MS
+
+
+def test_no_schedule_leaves_size_constant():
+    """Default path must be unchanged: no switches recorded, size untouched."""
+    r = Replay(range_size=1.0)
+    r.run([(100.0, 0), (100.5, DAY_MS), (101.5, DAY_MS + 1)])
+    assert r.range_size_changes == []
+    assert r.range_builder.range_size == 1.0
+
+
+def test_schedule_switches_size_at_utc_midnight():
+    """Seed size 1.0; schedule sizes day 1 at 5.0. Ticks on day 0 must build
+    bars at 1.0; the first tick of day 1 swaps the size before it is used."""
+    r = Replay(range_size=1.0, range_size_schedule={1: 5.0})
+    # day 0: 100 -> 101.0 spans 1.0 -> exactly one bar closes at size 1.0,
+    #        the next bar opens at 101.0.
+    # day 1: 101 -> 104.0 spans 3.0, below the new 5.0 -> no further bar.
+    #        (Prices stay continuous on purpose: a jump would close bars via
+    #        the builder's while-loop and hide what this test is checking.)
+    r.run([(100.0, 0), (101.0, 1), (103.0, DAY_MS), (104.0, DAY_MS + 1)])
+    assert r.range_size_changes == [(1, 5.0)]
+    assert r.range_builder.range_size == 5.0
+    assert len(r.bars) == 1
+
+
+def test_day_absent_from_schedule_keeps_previous_size():
+    """Day 1 sized, day 2 absent -> day 2 keeps 5.0, no second switch."""
+    r = Replay(range_size=1.0, range_size_schedule={1: 5.0})
+    r.run([(100.0, 0), (100.0, DAY_MS), (100.0, 2 * DAY_MS)])
+    assert r.range_size_changes == [(1, 5.0)]
+    assert r.range_builder.range_size == 5.0
+
+
+def test_switch_happens_before_the_ticks_bar_update():
+    """The first tick of the new day must already be measured against the new
+    size. Seed 10.0, day 1 -> 1.0. Day 0 opens a bar at 100. The day-1 tick at
+    101.0 spans 1.0: it closes a bar ONLY if the new size is already active."""
+    r = Replay(range_size=10.0, range_size_schedule={1: 1.0})
+    r.run([(100.0, 0), (101.0, DAY_MS)])
+    assert len(r.bars) == 1
+
+
+def test_redundant_schedule_entry_records_no_switch():
+    """A schedule that names the size already active is not a change."""
+    r = Replay(range_size=2.0, range_size_schedule={1: 2.0})
+    r.run([(100.0, 0), (100.0, DAY_MS)])
+    assert r.range_size_changes == []

@@ -31,16 +31,21 @@ TWO-STAGE BREAK-AND-ACCEPTANCE RULE (our mechanization of the above):
         confirmed swing point (below swing-low for a long, above swing-high
         for a short). Using close rather than a wick-touch avoids
         overreacting to a single spike.
-    Stage 2 (acceptance, one further bar): if the VERY NEXT bar's close is
-        still beyond that level, the break is accepted -> exit. If the next
-        bar closes back on the original side, the break failed — per the
-        source this is actually often a signal to STAY, not leave, so we
-        just clear the pending flag and keep holding.
-    This is our own mechanization of "acceptance", not a number given in the
-    source (the articles describe the concept, not a bar-count) — one
-    confirmation bar was chosen to mirror the same 2-bar-lag discipline the
-    swing definition itself already uses, keeping one consistent time
-    constant through the whole rule rather than inventing a second one.
+    Stage 2 (acceptance, `acceptance_bars` further bars, default 1): if
+        price's close stays beyond that level for `acceptance_bars`
+        consecutive bars after the break bar, the break is accepted ->
+        exit. If any of those bars closes back on the original side, the
+        break failed — per the source this is actually often a signal to
+        STAY, not leave, so we just clear the pending count and keep
+        holding; a fresh break later starts counting from zero again.
+    `acceptance_bars` defaults to 1 bar (2 bars total: break + 1 confirm),
+    chosen originally to mirror the swing definition's own 2-bar lag
+    discipline. Real-data testing (2026-07-07) found this 1-bar window
+    resolves almost as fast as the original single-bar rule this whole
+    mechanization was built to replace, and widening `swing_confirm_bars`
+    (which controls how mature the swing POINT is, not how long the BREAK
+    must hold) made results worse, not better — motivating
+    `acceptance_bars` as its own separate, explicit parameter to test.
 
 CORNER CASE, documented: until a swing point has confirmed at all (needs 5
 bars minimum), there is no swing-based reversal signal available — a
@@ -86,13 +91,31 @@ def check_break_and_acceptance(
     side: Literal["long", "short"],
     last_swing_low: float | None,
     last_swing_high: float | None,
-    pending_break: bool,
+    pending_break: bool | int,
     bar,
-) -> tuple[bool, bool]:
-    """One step of the two-stage rule (see module docstring).
+    acceptance_bars: int = 1,
+) -> tuple[bool, bool | int]:
+    """One step of the generalized two-stage rule (see module docstring).
 
-    Returns (exit_now, new_pending_break_state). Pure function — no state
-    held here, the caller (WFStrategy) carries `pending_break` across calls.
+    `pending_break`: False (or 0) means no break currently in progress.
+    True (or an int N>=1) means price has closed beyond the level for N
+    consecutive bars, including the break bar itself. `acceptance_bars`
+    (default 1, matching the original hardcoded behavior exactly) is how
+    many further bars price must stay beyond the level, after the break
+    bar, before the reversal is accepted — total bars from break to exit
+    = acceptance_bars + 1.
+
+    Returns (exit_now, new_pending_break). Pure function — no state held
+    here, the caller (WFStrategy) carries `pending_break` across calls.
+
+    Backward compatible by construction, including strict identity checks
+    (not just equality): existing callers that don't pass
+    `acceptance_bars` get the literal True/False values back exactly as
+    before — every pre-existing test in both test_swings.py and
+    test_strategy.py (including two that check `is True`/`is False`)
+    passes with zero edits. Only when `acceptance_bars > 1` and a break
+    has survived more than one bar does this return a plain int (2, 3,
+    ...) instead of True — a case that couldn't exist before this change.
     """
     if side == "long":
         level = last_swing_low
@@ -105,11 +128,19 @@ def check_break_and_acceptance(
             return False, False
         broke = bar.close > level
 
-    if pending_break:
-        if broke:
-            return True, False       # still beyond the level -> accepted -> exit
-        return False, False          # reclaimed -> break failed -> stay, clear flag
+    if not broke:
+        return False, False
 
-    if broke:
-        return False, True           # objective break just happened, await confirmation
-    return False, False
+    new_count = pending_break + 1
+    if new_count > acceptance_bars:
+        return True, False
+    if new_count == 1:
+        # Exact identity match with the pre-2026-07-07 behavior when
+        # acceptance_bars=1 (the default): the very first pending bar
+        # returns the literal True singleton, not the int 1, because
+        # test_strategy.py's swing-mode integration tests check this
+        # state with `is True`/`is False` (identity), not `==`
+        # (equality). Only bars 2+ of a multi-bar acceptance window
+        # (acceptance_bars > 1) surface as plain integers.
+        return False, True
+    return False, new_count

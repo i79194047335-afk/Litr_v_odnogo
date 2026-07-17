@@ -1,5 +1,43 @@
 # Pass/fail criterion — swing-mode + swing-trailing re-run
 
+> ## ⚠ BLOCKING, UNRESOLVED (raised 2026-07-10): "out-of-sample" below is wrong
+>
+> This document names **July 3–6, 2026** as the out-of-sample set. Those days
+> have since been used at least three times to choose between strategy
+> variants — the bias-regime audit, the no-reversal variant, and the
+> acceptance-window sweep. Once a variant is *selected* on a set of days,
+> those days are part of the fitting sample. Applying the criterion below to
+> them re-creates exactly the overfitting it was written to catch.
+>
+> **Do not run this criterion against Jul 3–6 and call the result
+> out-of-sample.**
+>
+> Untouched, clean (schema v2), already on disk: **Jul 7, 8, 9** (and Jul 10,
+> partial).
+>
+> Proposed re-labelling — **needs Ivan's decision, not Claude's**, because it
+> trades statistical strictness against how much data is left to iterate on:
+>
+> | Set | Days | Rule |
+> |-----|------|------|
+> | calibration | Jun 29 – Jul 2 | fit freely |
+> | validation | Jul 3 – Jul 6 | iterate variants freely; NOT a verdict |
+> | holdout | Jul 7 onward | touched ONCE, at the end; that number is the number |
+>
+> Note the interaction with rolling calibration (`docs/ROLLING_CALIBRATION_2026-07-10.md`):
+> `range_size` for a holdout day is derived from the day before it, so a
+> holdout run needs its immediately-preceding day as a seed. That seed day's
+> trades must be discarded, exactly as `rolling_variant.py` already does.
+>
+> Until this is decided, no run of this criterion produces a verdict. Tracked
+> as item **A2** in `docs/AUDIT_2026-07-10.md`.
+>
+> Also note, from the same audit: the recorded OOS result (−0.1740 bps,
+> t = −0.86) was measured with `range_size=15.3` on days whose own volatility
+> called for ~9. Re-measured with correct sizing (item A4, now closed) the
+> strategy is *more* clearly negative, not less: −0.3673 bps, t = −4.33 over
+> Jul 3–9. Condition 1 below currently **fails**.
+
 Status: provisional, set by Claude at Ivan's explicit request (2026-07-07,
 "делай на своё усмотрение, как предлагал, если что потом поправим").
 Not yet exercised against a real result. Adjustable after seeing numbers —
@@ -54,3 +92,11 @@ match whatever number came out.
 
 - 2026-07-07: initial provisional version. Not yet run against the
   swing+trailing re-run.
+- 2026-07-10: **suspended, not amended.** The Jul 3–6 set named here is no
+  longer out-of-sample (see the banner at the top). Condition 3's premise was
+  separately checked and cleared: it had been suspected of comparing samples
+  with different effective fill rates, on the belief that the in-sample days
+  carried ~18% duplicate ticks — that belief was disproved
+  (`docs/AUDIT_2026-07-10.md` item A1), so condition 3 is sound as written.
+  Awaiting Ivan's decision on the calibration/validation/holdout split before
+  this criterion can produce a verdict on anything.
