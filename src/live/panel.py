@@ -268,6 +268,46 @@ def _position_field(position: dict, field: str):
     return position[field]
 
 
+def _place_tp_sl(
+    kind: str,
+    market_id: int,
+    size: float,
+    close_is_ask: bool,
+    trigger_price: float,
+):
+    """Place a native TP or SL that closes an existing position.
+
+    Verified live on 2026-07-17 against a real 0.01 ETH position:
+
+    - These are the exchange's own conditional orders (type take-profit /
+      stop-loss), not something emulated in the panel. They sit `pending`
+      until the mark crosses `trigger_price`, then fire as a market order.
+    - `price` must equal `trigger_price`. The market variant still carries a
+      `price` field (it is the acceptable-execution price on trigger), and
+      the price=0 trap that bites plain market orders bites here too —
+      setting it to the trigger is the safe, tested value.
+    - `is_ask` is the CLOSING side (long → sell), and `reduce_only=True` is
+      mandatory: a TP/SL must never open or flip a position, only close one.
+    - There is no server-side check that a TP sits above the mark and an SL
+      below (for a long); the caller owns that. The UI enforces it before
+      calling here.
+    """
+    trigger_ticks = _price_to_ticks(trigger_price, market_id)
+    size_ticks = abs(_size_to_ticks(size, market_id))
+    fn = client.create_tp_order if kind == "tp" else client.create_sl_order
+    return _run_async(
+        fn(
+            market_index=market_id,
+            client_order_index=int(time.time() * 1000) % 2**31,
+            base_amount=size_ticks,
+            trigger_price=trigger_ticks,
+            price=trigger_ticks,
+            is_ask=close_is_ask,
+            reduce_only=True,
+        )
+    )
+
+
 def _fill_view(trade, account_index: int) -> dict:
     """Our side of a fill. The API describes the trade, not our part in it.
 
@@ -536,6 +576,97 @@ with tab1:
                             st.error(f"Close failed: {err}")
                         else:
                             st.success(f"✓ Close sent: `{tx_resp.tx_hash}`")
+
+                    # ── TP / SL for this position ──────────────────────────
+                    is_long = pos_sign > 0
+                    ob = _run_async(
+                        client.order_api.order_book_orders(
+                            market_id=pos_market, limit=1
+                        )
+                    )
+                    mark = None
+                    if ob.bids and ob.asks:
+                        mark = (
+                            _api_decimal(ob.bids[0].price)
+                            + _api_decimal(ob.asks[0].price)
+                        ) / 2
+                        st.caption(f"Mark ≈ ${mark:,.2f}")
+
+                    with st.expander("Take-profit / Stop-loss"):
+                        # A TP for a long triggers ABOVE mark, an SL BELOW
+                        # (mirror for a short). We pre-fill sensible sides of
+                        # the mark and validate direction before sending —
+                        # the exchange does not check this for us.
+                        default_tp = (mark or 0) * (1.02 if is_long else 0.98)
+                        default_sl = (mark or 0) * (0.98 if is_long else 1.02)
+
+                        tp_price = st.number_input(
+                            "TP trigger ($)",
+                            min_value=0.01,
+                            value=round(default_tp, 2) or 0.01,
+                            step=1.0,
+                            format="%.2f",
+                            key=f"tp_{pos_market}",
+                        )
+                        sl_price = st.number_input(
+                            "SL trigger ($)",
+                            min_value=0.01,
+                            value=round(default_sl, 2) or 0.01,
+                            step=1.0,
+                            format="%.2f",
+                            key=f"sl_{pos_market}",
+                        )
+
+                        def _dir_ok(kind: str, trig: float) -> bool:
+                            if mark is None:
+                                return True  # can't validate; let it through
+                            if is_long:
+                                return trig > mark if kind == "tp" else trig < mark
+                            return trig < mark if kind == "tp" else trig > mark
+
+                        bcol1, bcol2 = st.columns(2)
+                        with bcol1:
+                            if st.button(
+                                "Set TP", key=f"settp_{pos_market}", width="stretch"
+                            ):
+                                if not _dir_ok("tp", tp_price):
+                                    st.error(
+                                        "TP must be "
+                                        + ("above" if is_long else "below")
+                                        + " mark for a "
+                                        + ("long" if is_long else "short")
+                                    )
+                                else:
+                                    do_refresh()
+                                    _, r, e = _place_tp_sl(
+                                        "tp", pos_market, pos_size, close_side, tp_price
+                                    )
+                                    st.error(f"TP failed: {e}") if e else st.success(
+                                        f"✓ TP set: `{r.tx_hash}`"
+                                    )
+                        with bcol2:
+                            if st.button(
+                                "Set SL", key=f"setsl_{pos_market}", width="stretch"
+                            ):
+                                if not _dir_ok("sl", sl_price):
+                                    st.error(
+                                        "SL must be "
+                                        + ("below" if is_long else "above")
+                                        + " mark for a "
+                                        + ("long" if is_long else "short")
+                                    )
+                                else:
+                                    do_refresh()
+                                    _, r, e = _place_tp_sl(
+                                        "sl", pos_market, pos_size, close_side, sl_price
+                                    )
+                                    st.error(f"SL failed: {e}") if e else st.success(
+                                        f"✓ SL set: `{r.tx_hash}`"
+                                    )
+                        st.caption(
+                            "Native exchange orders, reduce-only. They appear "
+                            "in the Orders tab as pending until triggered."
+                        )
 
 # ── Tab 2: Active Orders ──────────────────────────────────────────────────
 
