@@ -664,6 +664,40 @@ clone), and the Fills tab closed step 2's last spec item. The realized-PnL
 derivation was hand-checked against Ivan's own closed shorts: SOL
 (75.789 - 75.255) x 771.278 = 411.862452, matching the API exactly.
 
+**Evening: TP/SL, and a framework decision.** Added native take-profit /
+stop-loss on an open position — real Lighter conditional orders
+(create_tp_order / create_sl_order), not emulated; semantics learned by
+placing them live (price must equal trigger_price; reduce_only mandatory;
+the exchange does NOT validate trigger direction, the UI does). Trailing
+stops deliberately excluded — Lighter has no trailing primitive, it needs
+an external process, out of scope for a manual panel.
+
+Two panel bugs surfaced only when Ivan clicked, again — a fifth and sixth
+in the tally of things static checks (py_compile + 266 tests) cannot see:
+the "internal server" from launching without the venv active, and a
+Streamlit "magic" crash where a bare ternary statement made Streamlit
+re-parse a source fragment with ast and choke ("unmatched ')'" from
+<unknown>). Standing lesson reinforced: on a Streamlit panel the first
+render proves nothing and green tests prove less; only a click does.
+
+**Framework decision — stay hand-rolled, decided with Ivan.** He asked why
+not use Hummingbot / Freqtrade, whose UIs look better. Checked live: as of
+Hummingbot v2.15 (mid-2026) there IS now a Lighter connector (spot +
+perp), so "no path existed" is no longer the reason — but the reasons that
+remain hold. (1) The project's goal is for Ivan to UNDERSTAND the machinery,
+not to run a black box; a framework hides exactly the SDK-vs-reality gaps
+this day spent surfacing. (2) Hummingbot is market-making-first, which
+CONTEXT already rules out (ndr: primitive MM loses by design); the range-bar
+strategy is directional. (3) Freqtrade does not support Lighter. Recorded so
+this is not re-litigated: **the polished UI is not the bottleneck — the
+strategy is.** A pretty face over an edgeless strategy is still edgeless.
+Note Hummingbot's own dashboard is Streamlit too — the tool choice was
+sound; the panel just is not meant to be a manual terminal.
+
+**Where the live track stands:** panel done, connector done, steps 1-2
+closed. The next real move is step 3 (the contract) and, ahead of it, the
+open strategy question — not more panel work.
+
 ## Session log (2026-07-10)
 
 Audit session. Two documented "facts" this file had been carrying turned out
@@ -1053,11 +1087,15 @@ Key events from the current chat, most recent first:
 **Live/testnet track (as of 2026-07-17)** — runs in parallel with the
 backtest list below; real money still gated on backtest edge + testnet.
 
-0. ~~Step 2 is not done — fills missing~~ — **built 2026-07-17** (78ed3f4).
-   The Fills tab shows side, role, price, size and realized PnL per fill,
-   all derived from the account index rather than taken on trust (the API
-   describes a trade, not our part in it). Step 2's spec is met. Its
-   rendering is still unclicked — see the standing rule in item 1.
+0. ~~Step 2 is not done — fills missing~~ — **done 2026-07-17**. Panel now
+   has: Trading, Orders, self-refreshing Order Book (2s fragment), Fills
+   (side/role/price/PnL derived from the account index), and native TP/SL
+   on an open position (exchange conditional orders, reduce-only,
+   direction-validated — df2684b). All verified live. Step 2 is closed.
+   **Panel is treated as DONE — do not keep polishing it.** It is a
+   witness-and-kill-switch surface over the infra (observe mode), not a
+   manual trading terminal; for hands-on trading Lighter's own web UI wins
+   and Ivan uses it. See the framework decision in the 2026-07-17 log.
 1. ~~Have a human run the panel and click twice~~ — **done 2026-07-17**;
    it found the `_LOOP` lifetime bug (open question 5), which no amount of
    reading had. Keep the habit: after any panel change, click twice. The
