@@ -641,9 +641,10 @@ with tab1:
                                     _, r, e = _place_tp_sl(
                                         "tp", pos_market, pos_size, close_side, tp_price
                                     )
-                                    st.error(f"TP failed: {e}") if e else st.success(
-                                        f"✓ TP set: `{r.tx_hash}`"
-                                    )
+                                    if e:
+                                        st.error(f"TP failed: {e}")
+                                    else:
+                                        st.success(f"✓ TP set: `{r.tx_hash}`")
                         with bcol2:
                             if st.button(
                                 "Set SL", key=f"setsl_{pos_market}", width="stretch"
@@ -660,9 +661,10 @@ with tab1:
                                     _, r, e = _place_tp_sl(
                                         "sl", pos_market, pos_size, close_side, sl_price
                                     )
-                                    st.error(f"SL failed: {e}") if e else st.success(
-                                        f"✓ SL set: `{r.tx_hash}`"
-                                    )
+                                    if e:
+                                        st.error(f"SL failed: {e}")
+                                    else:
+                                        st.success(f"✓ SL set: `{r.tx_hash}`")
                         st.caption(
                             "Native exchange orders, reduce-only. They appear "
                             "in the Orders tab as pending until triggered."
