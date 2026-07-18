@@ -240,6 +240,8 @@ def _market_meta() -> dict:
             "symbol": ob.get("symbol") or str(ob["market_id"]),
             "price_decimals": int(ob["supported_price_decimals"]),
             "size_decimals": int(ob["supported_size_decimals"]),
+            "market_type": ob.get("market_type"),
+            "status": ob.get("status"),
         }
     if not meta:
         st.error("Could not read market metadata — refusing to guess scaling.")
@@ -254,6 +256,24 @@ def _market_field(market_id: int, field: str):
         # Guessing a default here is what caused the SOL 10x bug.
         st.error(f"No {field} for market {market_id} — refusing to guess.")
         st.stop()
+
+
+def _tradable_markets() -> list[int]:
+    """Market ids the panel will trade, read from the exchange.
+
+    Was hardcoded [0, 1, 2]; that both missed any perp the exchange adds and
+    silently listed markets 24/92 that testnet does not have. Now: every
+    active PERP, in id order. Spot markets (e.g. 2048/2049) are excluded on
+    purpose — they have no signed position, no reduce_only close, so the
+    Trading/Close/TP-SL logic here does not apply to them. Adding spot is a
+    separate feature, not a longer list.
+    """
+    ids = [
+        mid
+        for mid, m in _market_meta().items()
+        if m.get("market_type") == "perp" and m.get("status") == "active"
+    ]
+    return sorted(ids)
 
 
 def _position_field(position: dict, field: str):
@@ -452,7 +472,7 @@ with tab1:
 
         market_id = st.selectbox(
             "Market",
-            options=[0, 1, 2],
+            options=_tradable_markets(),
             format_func=lambda m: _market_symbol(m),
         )
         side = st.radio("Side", ["BUY", "SELL"], horizontal=True)
@@ -710,7 +730,7 @@ with tab2:
             )
             cancel_mkt = st.selectbox(
                 "Market for cancel",
-                options=[0, 1, 2],
+                options=_tradable_markets(),
                 format_func=lambda m: _market_symbol(m),
                 key="cancel_mkt",
             )
@@ -754,7 +774,7 @@ def _order_book_fragment() -> None:
     with c1:
         ob_market = st.selectbox(
             "Market",
-            options=[0, 1, 2],
+            options=_tradable_markets(),
             format_func=lambda m: _market_symbol(m),
             key="ob_market",
         )
@@ -830,7 +850,7 @@ with tab4:
     with col_m:
         fills_market = st.selectbox(
             "Market",
-            options=[None, 0, 1, 2],
+            options=[None, *_tradable_markets()],
             format_func=lambda m: "All" if m is None else _market_symbol(m),
             key="fills_market",
         )
