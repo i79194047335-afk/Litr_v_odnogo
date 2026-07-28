@@ -1,0 +1,24 @@
+[Unit]
+Description=Lighter participant-mining collector (trade tape with account fields)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/projects/Litr_v_odnogo
+# Market 1 (BTC) only to start: it is the market the whole backtest track used,
+# it carries ~2/3 of the tape volume, and one market is the cheapest way to
+# prove the collector before widening. Add ids here to widen.
+ExecStart=/root/projects/Litr_v_odnogo/.venv/bin/python -m src.collector.lighter_participants --markets 1
+Restart=always
+RestartSec=5
+# The collector handles SIGTERM itself: it cancels the reader, flushes the gzip
+# buffer and exits 0. Without a clean stop the tail of the buffer is lost on
+# every redeploy, so give it room rather than killing it.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=append:/var/log/lighter-participants.log
+StandardError=append:/var/log/lighter-participants.log
+
+[Install]
+WantedBy=multi-user.target
