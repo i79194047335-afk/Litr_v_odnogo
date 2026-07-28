@@ -1,6 +1,10 @@
 repos:
+  # Pinned to the version gitleaks-action installs in CI. They drifted (8.18.4
+  # here vs 8.24.3 there) and the default rulesets differ enough that a clean
+  # local hook stopped predicting a clean CI run — 8.24 flagged a line 8.18 was
+  # happy with. Bump both together, or the hook goes back to being advisory.
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.18.4
+    rev: v8.24.3
     hooks:
       - id: gitleaks
   - repo: https://github.com/pre-commit/pre-commit-hooks
