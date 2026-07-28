@@ -1,0 +1,31 @@
+# Gitleaks config for a PUBLIC repository. The default ruleset stays fully
+# enabled — this file only narrows a specific false positive.
+#
+# WHY THIS EXISTS. The project's own documents record measurements as
+# `name=value` prose, and several of those live next to the word "API" (they
+# describe DeepSeek API calls). Gitleaks 8.24's `generic-api-key` rule reads
+# `Cost: 1 API call, prompt_chars=167302` as a keyword followed by a
+# high-entropy assignment and flags it. The CI run on e460972 failed exactly
+# this way on hypotheses/H-001.result.md:222.
+#
+# The allowlist below matches the SECRET, not the file, so real credentials
+# stay detected everywhere — including in docs, which is where a pasted key is
+# most likely to end up in a repo like this one. Blanket-excluding docs/ or
+# hypotheses/ would have been the easy fix and the wrong one.
+#
+# Local pre-commit pins gitleaks v8.18.4 while the CI action installs 8.24.3,
+# so a clean local hook does not predict a clean CI run. Bumping the pin is the
+# real fix for that; this file makes both versions agree on this case.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Run metrics written as prose in project documents"
+regexTarget = "match"
+regexes = [
+  # Token / character counters from LLM run logs: digits only, no secret shape.
+  '''(prompt|completion|reasoning|total|response|user_prompt)_(chars|tokens)\s*=\s*\d+''',
+  # Sampling and stop metadata from the same logs.
+  '''(finish_reason|temperature|max_tokens)\s*=\s*[\w.]+''',
+]
