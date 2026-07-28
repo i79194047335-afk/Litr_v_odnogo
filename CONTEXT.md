@@ -665,6 +665,12 @@ known ghost. `scripts/falsify.py` + `hypotheses/`, 13 new tests (279 total).
   A path named explicitly but missing is now a hard error, not a silent
   `[absent from repo]`. Context is not the constraint — 1.3 MB measured, and
   43.7k of 43.8k prompt tokens came from cache.
+- **The sweep is PARKED, not queued.** The current direction is participant
+  mining (`docs/START_participant_mining.md`, `a21ac93`) and the swing track is
+  closed there. H-001 tested the protocol, not the parameter; treating its
+  leftover "queued measurement" as the next step is drift, and it already
+  happened once in this session before Ivan caught it. Do not pick it up unless
+  he asks for it by name.
 - **Open, deliberately not run:** whether `2` actually is optimal. The sweep is
   runnable (flag exists, 2.4 GB ticks on disk, and per round 2 it must run with
   `--rolling-range-size`, not the constant `15.3`) but needs Ivan's decision on
