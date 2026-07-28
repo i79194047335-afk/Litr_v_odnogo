@@ -1400,3 +1400,151 @@ In **both**:
 - Cannot click a Streamlit UI. Panel code paths can be exercised by calling
   them directly, but rendering and the event-loop behaviour need a human to
   run `streamlit run` and click twice.
+
+## Session 2026-07-24 — strategic pivot: participant mining, not price patterns
+
+**Verified fresh clone + pytest at session start: 266 green on dc32605.**
+
+### Range-bar / swing track — closed at the tested scale
+- `diag_take_vs_rest.py` (never run before) finally ran: 26 days, 210k bars,
+  7364 trades. No pre-entry metric separates the take population ex ante.
+  `ticks/bar` is "significant" (p=0.0000) but Cliff's d=+0.04 — negligible;
+  the p-value is an artefact of n=1376 vs 5988, not a signal.
+- `diag_regime.py`: chop/trend swing-density ratio = 1.22x, WEAKER than the
+  1.77x a synthetic random walk gives. The regime-filter hypothesis (swing
+  density, level age) is dead. `swing_rate` p=1.0000.
+- Take-exit "+9.75 bps, 100% win" reaffirmed as ARITHMETIC, not an edge: a
+  take exit is profitable by definition; the only question was ex-ante
+  separability, and the answer is no.
+
+### CRITICAL caveat surfaced by Ivan (do not lose this)
+- `range_size=15.3` is mrcvokka's forum heuristic (~30% of mean 1m candle
+  range), NEVER calibrated against any outcome. `swing_confirm_bars=2` was
+  NEVER swept — the claim "widening made it worse" appears only as prose in
+  two docs, with NO numbers recorded anywhere. Same class as the "17.5% dup"
+  ghost figure.
+- Therefore all negative results (acceptance-window, rolling-calib, bias,
+  take-vs-rest) were run at ONE unvalidated scale. They are not five
+  independent experiments — one experiment repeated. Correct verdict is
+  "no edge AT THIS SCALE", not "no edge". Claude's earlier "mechanics dead"
+  was an overreach and was retracted.
+
+### The reframe — analyse the generating process, not its shadow
+- Confirmed by inspection: the collector subscribes to `trade/{market}`
+  ONLY, writing `{p,s,t,side,tid}`. Book / cancels / liquidations are NOT
+  captured. Two months of "forex-style" analysis was forced by having only
+  the least informative layer.
+- Design doc written: `docs/MICROSTRUCTURE_PIPELINE.md` (6-layer pipeline,
+  causal features, markout/adverse-selection labels, bid-ask-bounce trap).
+
+### Ivan's chosen direction (his call, explicit): PARTICIPANT MINING
+- Goal is NOT generic "does the book predict price". Goal is: find repeating
+  behaviours of specific participants (bots AND manual — take everyone,
+  triage later), rank by realised PnL, then COPY the profitable / FADE the
+  predictably losing. Speed constraint (ndr): a participant profitable only
+  because it is fast is not copyable at our 240-500 ms — but we collect all
+  and separate by hold-time/frequency afterwards.
+- KEY ENABLER (found this session, src/live/panel.py:334): Lighter trades
+  name BOTH counterparties — `ask_account_id` / `bid_account_id` — plus
+  per-side `ask_account_pnl` / `bid_account_pnl`. Identity is PUBLIC and
+  addressable. This is the DEX microscope; a CEX never exposes it.
+- Lighter REST: `GET /api/v1/pnl` (per-account PnL chart), `GET /api/v1/trades`
+  (per-account, auth for own master/sub). Third-party leaderboard exists
+  (Litscan, ranks accounts by volume/fees/liq/PnL). => a participant ranking
+  is buildable on the 26 days ALREADY on disk, in DAYS not weeks — IF the
+  account fields are readable for FOREIGN accounts.
+- Other venues in scope LATER (Ivan): Polymarket has an OPEN leaderboard
+  endpoint `GET https://data-api.polymarket.com/v1/leaderboard` returning
+  proxyWallet + pnl, no auth. Prediction-market participant mining is the
+  cheapest source found; deferred, not dropped.
+
+### UNKNOWN — do not assume (probe before building)
+- Whether `/api/v1/pnl` and `/api/v1/trades` return data for OTHER (foreign)
+  accounts without auth, or only own. THIS DECIDES days-vs-weeks.
+- Whether the Lighter account_index is persistent over time (needed to track
+  one trader across days). Polymarket's 0x wallet is persistent.
+- History depth available backwards from the API.
+
+### Next step (defined, not yet run)
+- Probe `/api/v1/pnl` + `/api/v1/trades` for FOREIGN account_ids taken from
+  our own trade log, unauthenticated, and see what comes back. If populated:
+  build the participant PnL ranking on existing 26 days immediately. If own-
+  only: extend the collector to persist the account fields from the trade
+  stream (already flowing, currently discarded) — then rank in days.
+- Pending, delivered as files this session (place in repo): ws_probe_book.py,
+  diag_regime.py, diag_take_vs_rest.py (root), src/backtest/viz_swings.py,
+  docs/MICROSTRUCTURE_PIPELINE.md.
+
+## Session 2026-07-24 — strategic pivot: participant mining, not price patterns
+
+**Verified fresh clone + pytest at session start: 266 green on dc32605.**
+
+### Range-bar / swing track — closed at the tested scale
+- `diag_take_vs_rest.py` (never run before) finally ran: 26 days, 210k bars,
+  7364 trades. No pre-entry metric separates the take population ex ante.
+  `ticks/bar` is "significant" (p=0.0000) but Cliff's d=+0.04 — negligible;
+  the p-value is an artefact of n=1376 vs 5988, not a signal.
+- `diag_regime.py`: chop/trend swing-density ratio = 1.22x, WEAKER than the
+  1.77x a synthetic random walk gives. The regime-filter hypothesis (swing
+  density, level age) is dead. `swing_rate` p=1.0000.
+- Take-exit "+9.75 bps, 100% win" reaffirmed as ARITHMETIC, not an edge: a
+  take exit is profitable by definition; the only question was ex-ante
+  separability, and the answer is no.
+
+### CRITICAL caveat surfaced by Ivan (do not lose this)
+- `range_size=15.3` is mrcvokka's forum heuristic (~30% of mean 1m candle
+  range), NEVER calibrated against any outcome. `swing_confirm_bars=2` was
+  NEVER swept — the claim "widening made it worse" appears only as prose in
+  two docs, with NO numbers recorded anywhere. Same class as the "17.5% dup"
+  ghost figure.
+- Therefore all negative results (acceptance-window, rolling-calib, bias,
+  take-vs-rest) were run at ONE unvalidated scale. They are not five
+  independent experiments — one experiment repeated. Correct verdict is
+  "no edge AT THIS SCALE", not "no edge". Claude's earlier "mechanics dead"
+  was an overreach and was retracted.
+
+### The reframe — analyse the generating process, not its shadow
+- Confirmed by inspection: the collector subscribes to `trade/{market}`
+  ONLY, writing `{p,s,t,side,tid}`. Book / cancels / liquidations are NOT
+  captured. Two months of "forex-style" analysis was forced by having only
+  the least informative layer.
+- Design doc written: `docs/MICROSTRUCTURE_PIPELINE.md` (6-layer pipeline,
+  causal features, markout/adverse-selection labels, bid-ask-bounce trap).
+
+### Ivan's chosen direction (his call, explicit): PARTICIPANT MINING
+- Goal is NOT generic "does the book predict price". Goal is: find repeating
+  behaviours of specific participants (bots AND manual — take everyone,
+  triage later), rank by realised PnL, then COPY the profitable / FADE the
+  predictably losing. Speed constraint (ndr): a participant profitable only
+  because it is fast is not copyable at our 240-500 ms — collect all and
+  separate by hold-time/frequency afterwards.
+- KEY ENABLER (found this session, src/live/panel.py:334): Lighter trades
+  name BOTH counterparties — `ask_account_id` / `bid_account_id` — plus
+  per-side `ask_account_pnl` / `bid_account_pnl`. Identity is PUBLIC and
+  addressable. This is the DEX microscope; a CEX never exposes it.
+- Lighter REST: `GET /api/v1/pnl` (per-account PnL chart), `GET /api/v1/trades`
+  (per-account, auth for own master/sub). Third-party leaderboard exists
+  (Litscan, ranks accounts by volume/fees/liq/PnL). => a participant ranking
+  is buildable on the 26 days ALREADY on disk, in DAYS not weeks — IF the
+  account fields are readable for FOREIGN accounts.
+- Other venues in scope LATER (Ivan): Polymarket has an OPEN leaderboard
+  endpoint `GET https://data-api.polymarket.com/v1/leaderboard` returning
+  proxyWallet + pnl, no auth. Prediction-market participant mining is the
+  cheapest source found; deferred, not dropped.
+
+### UNKNOWN — do not assume (probe before building)
+- Whether `/api/v1/pnl` and `/api/v1/trades` return data for OTHER (foreign)
+  accounts without auth, or only own. THIS DECIDES days-vs-weeks.
+- Whether the Lighter account_index is persistent over time (needed to track
+  one trader across days). Polymarket's 0x wallet is persistent.
+- History depth available backwards from the API.
+
+### Next step (defined, not yet run)
+- Probe `/api/v1/pnl` + `/api/v1/trades` for FOREIGN account_ids taken from
+  our own trade log, unauthenticated, and see what comes back. If populated:
+  build the participant PnL ranking on existing 26 days immediately. If own-
+  only: extend the collector to persist the account fields from the trade
+  stream (already flowing, currently discarded) — then rank in days.
+- Delivered as files this session (place in repo): ws_probe_book.py,
+  diag_regime.py, diag_take_vs_rest.py (root), src/backtest/viz_swings.py,
+  docs/MICROSTRUCTURE_PIPELINE.md.
