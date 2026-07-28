@@ -42,10 +42,17 @@ TWO-STAGE BREAK-AND-ACCEPTANCE RULE (our mechanization of the above):
     chosen originally to mirror the swing definition's own 2-bar lag
     discipline. Real-data testing (2026-07-07) found this 1-bar window
     resolves almost as fast as the original single-bar rule this whole
-    mechanization was built to replace, and widening `swing_confirm_bars`
-    (which controls how mature the swing POINT is, not how long the BREAK
-    must hold) made results worse, not better — motivating
-    `acceptance_bars` as its own separate, explicit parameter to test.
+    mechanization was built to replace.
+
+    GHOST REMOVED (2026-07-28, H-001): this docstring previously stated that
+    widening `swing_confirm_bars` "made results worse, not better". That was
+    never measured. `git log --all -S` plus a search of `docs/` and `diag_out/`
+    finds no sweep artifact for this parameter anywhere in the repo's history;
+    both diagnostic logs run `confirm_bars=2` only. The 2026-07-07 real-data
+    testing referenced above covered `acceptance_bars`, a different knob.
+    `swing_confirm_bars` has NEVER been swept, upward or downward (`N >= 1`, so
+    `N = 1` was never compared either), and `2` is an untested default, not a
+    measured optimum. See `hypotheses/H-001.result.md`.
 
 CORNER CASE, documented: until a swing point has confirmed at all (needs 5
 bars minimum), there is no swing-based reversal signal available — a

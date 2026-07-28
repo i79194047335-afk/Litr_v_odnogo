@@ -14,8 +14,13 @@ BTC, `exit_mode=swing`, `trailing=False`, `range_size=15.3`, costs zero.
 
 `acceptance_bars` = how many bars a swing-structure break must *hold* after
 the break bar before the reversal exit fires. It is deliberately separate from
-`swing_confirm_bars`, which controls how mature the swing *point* is. Widening
-the latter had made results worse; this knob asks the other question.
+`swing_confirm_bars`, which controls how mature the swing *point* is. This knob
+asks the other question.
+
+> **Correction 2026-07-28 (H-001).** This paragraph used to read "Widening the
+> latter had made results worse". That was never measured — no sweep artifact for
+> `swing_confirm_bars` exists in the repo or its history. Treat `2` as an
+> untested default. See `hypotheses/H-001.result.md`.
 
 `acceptance_bars=1` is the pre-2026-07-07 hardcoded behaviour.
 

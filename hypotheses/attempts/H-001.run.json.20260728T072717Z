@@ -1,0 +1,27 @@
+{
+  "hypothesis_id": "001",
+  "ran_at": "2026-07-28T07:24:45Z",
+  "model": "deepseek-v4-pro",
+  "temperature": 0.0,
+  "max_tokens": 4000,
+  "system_prompt_sha256": "06c43b8494bc1cf241d9ede1a034f59c4631bec66ab32d210859c40b05094fb1",
+  "user_prompt_sha256": "dca00c7c4f80f3d3d789d116e2a7ce8a49e5317a47abfc590292d95afd471a60",
+  "user_prompt_chars": 153331,
+  "hypothesis_file_sha256": "00ea3c2c91ceb5e55edf13095ebd425edc5ffc146d262544e0a609aaf079290c",
+  "evidence_files": [
+    "CONTEXT.md",
+    "docs/AUDIT_2026-07-10.md",
+    "docs/BIAS_AUDIT_2026-07-07.md",
+    "docs/ACCEPTANCE_SWEEP_2026-07-10.md",
+    "docs/ROLLING_CALIBRATION_2026-07-10.md",
+    "docs/PASS_FAIL_CRITERION.md",
+    "docs/START_new_dev_chat.md",
+    "docs/START_participant_mining.md"
+  ],
+  "response_sha256": "5a04ce80ba7b2ebea4aa50159798ca9c8b32af5921bf2cd37145042a554e649e",
+  "response_chars": 1871,
+  "usage": null,
+  "unsealed_at": "2026-07-28T07:26:05Z",
+  "claude_verdict_sha256_at_unseal": "7926c5df7045f3ea54565d1aa189c012c6724067280f3ae7bff4cf8770402222",
+  "claude_verdict_chars_at_unseal": 7490
+}

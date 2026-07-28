@@ -1,0 +1,20 @@
+HYPOTHESIS: `swing_confirm_bars = 2` is the optimal value for the swing tracker. Widening it was tested on real data and made backtest results worse, so the parameter does not need to be swept and 2 can be kept as the fixed default in all further work.
+
+VERDICT: REFUTED
+
+GHOST-NUMBERS: [worsening magnitude (the numerical effect of widening — how many bps worse, at what t-stat) — no measurement recorded anywhere in the project record]
+
+UNSTATED ASSUMPTIONS:
+  - That the widening test (if it occurred) was run on a sound out‑of‑sample set, with the correct range_size and exit logic, and that the result is generalisable to future regimes.
+  - That the observed “worse” was statistically large enough not to be noise.
+  - That the test was a full sweep rather than a single ad‑hoc check of one value.
+
+ALTERNATIVE EXPLANATIONS:
+  - The “widening made things worse” statement may merely reflect a quick sanity check (one widened value, on the then‑contaminated OOS days, with the wrong fixed range_size) that produced a negative number by chance.
+  - The claim could be a mistaken extrapolation from the acceptance‑bars sweep, where widening that parameter also did not help, but the two are distinct knobs.
+
+ARITHMETIC: No arithmetic possible — no numeric sweep results for `swing_confirm_bars` exist in the project record to recompute.
+
+CONFLICTS WITH RECORD: The project record explicitly states on 2026‑07‑24 (under “CRITICAL caveat surfaced by Ivan”): **“`swing_confirm_bars=2` was NEVER swept — the claim ‘widening made it worse’ appears only as prose in two docs, with NO numbers recorded anywhere.”** That is a direct refutation of the hypothesis’s premise that a test was performed and showed a degradation. The claim is therefore a ghost figure of the exact kind the project has already repudiated (cf. the 17.5 % duplicate incident).
+
+KILL-SHOT: Sweep `swing

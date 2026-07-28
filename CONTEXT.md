@@ -587,6 +587,91 @@ strategy. Take-exit is the only current component with stable edge.
   new session with a fresh `git clone` + `pytest` run, before reading
   any chat summary or acting on this file's own "done" claims.**
 
+## Session log (2026-07-28)
+
+Consensus protocol taken from design to working code, and shaken down on a
+known ghost. `scripts/falsify.py` + `hypotheses/`, 13 new tests (279 total).
+
+- **MCP `cheap-llm` characterized** (it never had been): `cheap_agent(task,
+  files, use_pro)` is the only free-form tool; **no separate system-prompt
+  field** (each tool hardcodes its own); **not deterministic** —
+  `temperature=0.3` is baked in with no seed, proven by identical input giving
+  different output; context is a non-issue (1.3 MB passed with the file's tail
+  intact, whole project corpus is 202 KB); API errors come back as a plain
+  **string** `"ERROR calling DeepSeek: ..."`, so a failure looks like an answer.
+- **MCP cannot implement this protocol** — the blocking finding. An MCP result
+  returns into Claude's context, so "Claude writes his verdict BEFORE reading
+  DeepSeek's" becomes impossible and anti-anchoring — the protocol's only
+  mechanical guarantee — is lost. Hence `falsify.py`, which hits the same API
+  directly (stdlib `urllib`, no new dependency) and writes the answer to disk
+  **sealed**. Bonus: a real falsifier system prompt and `temperature=0`.
+- Ordering is enforced by the tool, not by discipline: `run` prints only
+  metadata and field counts (never values), `unseal` refuses until
+  `H-<id>.claude.md` exists with a `VERDICT:` and some substance, the Claude
+  verdict's sha256 is recorded at unseal so a later edit shows up in `status`,
+  and `run --force` archives the previous round instead of overwriting it.
+- **H-001 "`swing_confirm_bars=2` is optimal" — REFUTED, protocol passed.**
+  Blind and independently, both sides named the same three prose-only sources
+  and the head-on conflict with this file's own CRITICAL caveat. The cheap
+  kill-shot settled it: `git log --all -S` + grep over `docs/`/`diag_out/`
+  finds **no sweep artifact anywhere in history**; both diag logs run
+  `confirm_bars=2` only; the "missing sweep" commit `56a1e30` is
+  `acceptance_bars` (AUDIT S2), a different knob. Ghost disarmed in three
+  places, including the `swings.py` docstring — the worst place for it.
+- **Three defects found in the protocol itself** (all recorded in
+  `hypotheses/H-001.result.md` and folded into the doc): `max_tokens` covers
+  hidden reasoning, so 4000 truncated the first run mid-`KILL-SHOT`
+  (`reasoning_tokens=4459` of 5058) — the runner now refuses to seal a
+  `finish_reason=length` answer; presence of a label is not presence of a
+  field, and the first structural check happily reported "8/8" on that
+  truncated answer; and **the falsifier's citations must each be opened** —
+  DeepSeek cited a real `AUDIT` item S2 for a claim S2 does not make, reaching
+  the right conclusion through a fabricated support.
+- Also: hypotheses must be **atomic** (the two models agreed on every fact and
+  split on the label, REFUTED vs UNTESTABLE, because H-001 was compound), and
+  the falsifier **must not choose the evaluation split** — its kill-shot
+  proposed sweeping on the holdout, which would have burned the only clean
+  evaluation set, at zero costs besides.
+- **Round 2 (`falsify.py rebut`) added the same day**, after Ivan pointed out
+  that the design measured independence when what he wanted was
+  *complementarity* — DeepSeek reading Claude's verdict and saying what it adds
+  or disputes. Legitimate only after `unseal`: the Claude verdict is written and
+  hashed by then, so it cannot drift, and `status` reports an edit afterwards.
+  The rebuttal is not sealed; its purpose is to be read. Measured on H-001
+  round 1, blind: 4 findings only Claude had, 3 only DeepSeek had — the gain
+  comes from **non-overlap, not agreement**, so the less alike the two are, the
+  more it is worth.
+- **Round 2's own shakedown, on H-001:** it found a real defect in Claude's
+  verdict (his kill-shot cited "the fixed day split from
+  `PASS_FAIL_CRITERION.md`" — the file whose banner declares that split
+  invalid), and it supplied the one finding that changes the queued
+  measurement: the project has moved to rolling daily `range_size`
+  recalibration (A4), so a sweep at the constant `15.3` answers a question
+  about a regime we have left. All four of its citations checked out this time,
+  against round 1's fabricated `S2` attribution.
+- **And it repeated the forbidden move.** The `rebut` system prompt explicitly
+  bans choosing the evaluation split *and cites the round-1 holdout incident as
+  the reason*. DeepSeek proposed sweeping on the holdout anyway — twice in one
+  answer, plus a separate argument that the holdout "could be used without
+  waiting for a new split decision", contradicting the banner it had just cited
+  correctly. **Lesson: the prohibition cannot live in the prompt.** Filtering
+  kill-shots is a procedural step for Claude and Ivan, confirmed twice now by a
+  model that had been told.
+- **Evidence corpus moved into the hypothesis file** (`## Evidence corpus`). The
+  hardcoded list was 8 files, 180 KB of a 244 KB corpus, and left out
+  `docs/MICROSTRUCTURE_PIPELINE.md` — the current track. A file not handed over
+  cannot supply provenance, so the falsifier honestly reports "no source found":
+  a ghost manufactured by the tooling, in the protocol built to catch real ones.
+  A path named explicitly but missing is now a hard error, not a silent
+  `[absent from repo]`. Context is not the constraint — 1.3 MB measured, and
+  43.7k of 43.8k prompt tokens came from cache.
+- **Open, deliberately not run:** whether `2` actually is optimal. The sweep is
+  runnable (flag exists, 2.4 GB ticks on disk, and per round 2 it must run with
+  `--rolling-range-size`, not the constant `15.3`) but needs Ivan's decision on
+  the calibration/validation/holdout split first — `PASS_FAIL_CRITERION.md` still
+  carries its BLOCKING banner, and picking a split to get a number is the exact
+  move that forced the "no edge AT THIS SCALE" re-labelling.
+
 ## Session log (2026-07-17)
 
 Testnet track, steps 1-2 reviewed and repaired. Ivan asked Claude to audit
@@ -767,9 +852,11 @@ into this file, which is itself an instance of the drift documented below.
   closing positions "by a bias flip". They do not — they close on a swing
   break. See AUDIT item S3 before reasoning from it.
 - **`acceptance_bars` parameterized** in `swings.py` + `acceptance_variant.py`
-  sweep (branch `feature/acceptance-window`, `4e3c068`). Widening
-  `swing_confirm_bars` had made things worse, motivating a separate knob for
+  sweep (branch `feature/acceptance-window`, `4e3c068`) — a separate knob for
   how long a BREAK must hold, as distinct from how mature the swing POINT is.
+  **Correction 2026-07-28 (H-001):** this entry used to justify that knob with
+  "Widening `swing_confirm_bars` had made things worse". Never measured — no
+  sweep artifact exists in the repo's history. See `hypotheses/H-001.result.md`.
 - **`diag_take_vs_rest.py`** written to test Ivan's liquidity hypothesis
   (do take-exits differ from the rest in pre-entry volatility, participation,
   aggressor imbalance?). It sat **untracked** until 2026-07-10.
