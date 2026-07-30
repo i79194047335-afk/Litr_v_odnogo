@@ -156,9 +156,13 @@ def _normalize(market_id: int, raw: dict, kind: str, keep_all: bool) -> dict | N
         drop = set(STR_TWINS) | set(DERIVABLE) | set(UNUSED)
         rec = {k: v for k, v in raw.items() if k not in drop}
 
-    # Only marks liquidations: regular trades already carry type="trade", and a
-    # second constant field on 99%+ of records is pure overhead.
-    if kind == "liq":
+    # Liquidations arrive in TWO ways on the wire: (a) in the separate
+    # `liquidation_trades` array where they are expected, and (b) in the main
+    # `trades` array with `type: "liquidation"` — the real path, discovered
+    # 2026-07-29 when the collector had been reporting liq=0 for 31h while 112
+    # liquidations sat on disk unmarked. Check the record's own type field, not
+    # just the array the caller found it in.
+    if kind == "liq" or raw.get("type") == "liquidation":
         rec["kind"] = "liq"
     return rec
 
@@ -288,7 +292,7 @@ async def _consume(ws, market_ids: list[int], writer: DayWriter, keep_all: bool)
                     continue
                 raw_bytes[mid] += writer.write(mid, rec)
                 written[mid] += 1
-                if kind == "liq":
+                if rec.get("kind") == "liq":
                     liq[mid] += 1
 
         frames += 1
