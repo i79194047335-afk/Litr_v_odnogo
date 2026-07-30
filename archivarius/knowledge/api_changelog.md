@@ -3,6 +3,13 @@
 Ведёт Архивариус автоматически. Источник: <https://apidocs.lighter.xyz/llms.txt>
 Новые записи сверху.
 
+## 2026-07-30 — изменений: 1
+
+### [Rate Limits](https://apidocs.lighter.xyz/docs/rate-limits.md) — изменена
+_Раздел: Guides · тип: limits_
+
+Увеличен лимит запросов для **Standard accounts** в REST API с 10 до **60** weighted requests per rolling minute. Остальные лимиты и веса не изменились.
+
 ## 2026-07-30 — изменений: 3
 
 ### [Rate Limits](https://apidocs.lighter.xyz/docs/rate-limits.md) — изменена

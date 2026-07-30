@@ -73,12 +73,38 @@ archivarius/archivarius.sh
 | Путь | Что это | В git |
 |---|---|---|
 | `archivarius.sh` | весь агент | да |
-| `knowledge/api_changelog.md` | накопленные изменения — результат работы | да |
-| `state/snapshots/` | прошлые версии страниц для сравнения (~700 КБ) | нет |
+| `knowledge/api_changelog.md` | изменения прозой — для человека | да |
+| `knowledge/events.jsonl` | те же изменения строками JSON — для машин | да |
+| `state/snapshots/` | прошлые версии страниц для сравнения (~900 КБ) | нет |
 | `logs/run.log` | лог прогонов | нет |
 
 Состояние — это сами снимки: есть файл, значит страницу уже видели. Отдельной
 базы нет и не нужно.
+
+## Как читать результат
+
+Прозой, свежее сверху:
+
+```bash
+head -40 knowledge/api_changelog.md
+```
+
+Потоком, для фильтров и следующих агентов — по одному JSON-объекту на строку:
+
+```bash
+jq -r 'select(.breaking) | .title'                    knowledge/events.jsonl
+jq -r 'select(.kind=="limits") | .highlights[]'       knowledge/events.jsonl
+jq -r 'select(.kind!="cosmetic") | "\(.ts[:10]) \(.title)"' knowledge/events.jsonl
+jq -r '.kind' knowledge/events.jsonl | sort | uniq -c   # что меняется чаще всего
+```
+
+Поля события: `ts`, `source`, `url`, `title`, `section`, `change`
+(«изменена» / «новая страница»), `kind`, `breaking`, `highlights[]`, `summary`.
+
+`kind` — один из: `api` (эндпоинты, параметры, поля), `limits` (лимиты, квоты,
+тарифы), `behavior` (правила и поведение), `docs` (только текст и примеры),
+`cosmetic` (опечатки, форматирование). Если модель ответила прозой вместо
+JSON, `kind` будет `?`, а текст всё равно сохранится в `summary`.
 
 ## Модель
 

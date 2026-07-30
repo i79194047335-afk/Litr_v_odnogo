@@ -19,7 +19,8 @@ API_URL="https://api.deepseek.com/chat/completions"
 
 STATE_DIR="$HERE/state"
 SNAP_DIR="$STATE_DIR/snapshots"
-CHANGELOG="$HERE/knowledge/api_changelog.md"
+CHANGELOG="$HERE/knowledge/api_changelog.md"   # для человека
+EVENTS="$HERE/knowledge/events.jsonl"          # для машин: одна строка на изменение
 LOG_FILE="$HERE/logs/run.log"
 
 MAX_CHARS=12000                    # потолок на версию страницы в промпте
@@ -153,7 +154,18 @@ if [[ "$CHANGED" -eq 0 ]]; then
 fi
 
 # --- пересказ изменений через DeepSeek ---------------------------------
-SYSTEM_PROMPT='Ты — Архивариус, технический ассистент, следящий за документацией криптобиржи Lighter. Опиши сжато и точно, что изменилось, чтобы разработчик не перечитывал страницу целиком. Отвечай по-русски, технические термины и названия эндпоинтов/параметров оставляй на английском. Не выдумывай изменений, которых нет в тексте. Если правка косметическая — так и скажи одной строкой.'
+SYSTEM_PROMPT='Ты — Архивариус, технический ассистент, следящий за документацией криптобиржи Lighter. Опиши сжато и точно, что изменилось, чтобы разработчик не перечитывал страницу целиком. Не выдумывай изменений, которых нет в тексте.
+
+Отвечай СТРОГО одним JSON-объектом, без markdown-обёртки и без текста вокруг:
+{"summary": "...", "kind": "...", "breaking": true|false, "highlights": ["...", "..."]}
+
+- summary — разбор изменения по-русски (можно markdown внутри строки). Технические
+  термины, названия эндпоинтов, параметров и полей оставляй на английском.
+- kind — одно из: "api" (эндпоинты/параметры/поля), "limits" (лимиты, квоты, тарифы),
+  "behavior" (изменилось поведение или правила), "docs" (только текст/примеры/ссылки),
+  "cosmetic" (опечатки, форматирование, без смысловых изменений).
+- breaking — true, только если изменение сломает существующую интеграцию.
+- highlights — до 5 коротких фактов, каждый одной строкой. Пустой массив, если менять нечего.'
 
 BLOCK="$WORK_DIR/block.md"
 printf '## %s — изменений: %s\n\n' "$TODAY" "$CHANGED" > "$BLOCK"
@@ -181,14 +193,30 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
         -H "Content-Type: application/json" \
         -d "$payload" "$API_URL" 2>/dev/null)
 
-    summary=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+    raw=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
 
     # v4-flash — рассуждающая модель: сначала reasoning_content, потом content.
     # Если лимит токенов вышел на рассуждениях, content придёт пустым — это надо
     # отличать от сетевой ошибки, иначе чиним не то.
-    if [[ -z "$summary" ]] && printf '%s' "$response" | jq -e '.choices[0]' >/dev/null 2>&1; then
+    if [[ -z "$raw" ]] && printf '%s' "$response" | jq -e '.choices[0]' >/dev/null 2>&1; then
         reason=$(printf '%s' "$response" | jq -r '.choices[0].finish_reason // "?"')
         log WARN "пустой content (finish_reason=$reason) для: $url"
+    fi
+
+    # Просили голый JSON, но модель может завернуть его в ```json — снимаем обёртку.
+    parsed=$(printf '%s' "$raw" | sed -e 's/^[[:space:]]*```\(json\)\{0,1\}//' -e 's/```[[:space:]]*$//' \
+             | jq -c '{summary, kind, breaking, highlights}' 2>/dev/null)
+
+    if [[ -n "$parsed" ]]; then
+        summary=$(printf '%s' "$parsed" | jq -r '.summary // empty')
+        ckind=$(printf '%s'  "$parsed" | jq -r '.kind // "?"')
+        breaking=$(printf '%s' "$parsed" | jq -r 'if .breaking == true then "true" else "false" end')
+    else
+        # Модель ответила прозой вместо JSON — текст не теряем, поля помечаем неизвестными.
+        [[ -n "$raw" ]] && log WARN "ответ не разобрался как JSON: $url"
+        summary="$raw"
+        ckind="?"
+        breaking="false"
     fi
 
     if [[ -z "$summary" ]]; then
@@ -202,12 +230,33 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
         summary='_(модель не ответила — будет повторено при следующем прогоне)_'
     else
         summarized=$(( summarized + 1 ))
+
+        # Машиночитаемое событие: одна строка на изменение, чтобы следующие
+        # агенты читали это пайпом, а не разбирали прозу.
+        jq -c -n \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg url "$url" --arg title "$title" --arg section "$section" \
+            --arg change "$kind" --arg k "$ckind" --arg s "$summary" \
+            --argjson br "$breaking" \
+            --argjson hl "$(printf '%s' "$parsed" | jq -c '.highlights // []' 2>/dev/null || echo '[]')" \
+            '{ts:$ts, source:"lighter-apidocs", url:$url, title:$title, section:$section,
+               change:$change, kind:$k, breaking:$br, highlights:$hl, summary:$s}' \
+            >> "$EVENTS"
     fi
 
-    printf '### [%s](%s) — %s\n_Раздел: %s_\n\n%s\n\n' \
-        "$title" "$url" "$kind" "$section" "$summary" >> "$BLOCK"
+    mark=""
+    [[ "$breaking" == "true" ]] && mark=" ⚠️ **BREAKING**"
+    printf '### [%s](%s) — %s%s\n_Раздел: %s · тип: %s_\n\n%s\n\n' \
+        "$title" "$url" "$kind" "$mark" "$section" "$ckind" "$summary" >> "$BLOCK"
 done < "$CHANGES"
 
 prepend "$BLOCK"
 log INFO "описано моделью $summarized из $CHANGED изменённых страниц ($MODEL)"
+
+# Сводка по breaking — чтобы главное было видно в cron.log, не открывая журнал.
+if [[ -s "$EVENTS" ]]; then
+    today_breaking=$(jq -r --arg d "$TODAY" 'select(.breaking == true and (.ts | startswith($d))) | .title' "$EVENTS" 2>/dev/null | paste -sd', ')
+    [[ -n "$today_breaking" ]] && log WARN "BREAKING CHANGES: $today_breaking"
+fi
+
 log INFO "=== готово ==="
