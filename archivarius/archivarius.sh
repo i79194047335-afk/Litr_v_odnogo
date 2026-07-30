@@ -173,7 +173,7 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
 
     # jq собирает payload — экранирование кавычек/переводов строк на нём, не на нас
     payload=$(jq -n --arg m "$MODEL" --arg s "$SYSTEM_PROMPT" --arg u "$prompt" \
-        '{model:$m, temperature:0.2, max_tokens:1000,
+        '{model:$m, temperature:0.2, max_tokens:4000,
           messages:[{role:"system",content:$s},{role:"user",content:$u}]}')
 
     response=$(curl -sS --fail --retry 2 --retry-delay 5 --max-time 120 \
@@ -182,6 +182,14 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
         -d "$payload" "$API_URL" 2>/dev/null)
 
     summary=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+
+    # v4-flash — рассуждающая модель: сначала reasoning_content, потом content.
+    # Если лимит токенов вышел на рассуждениях, content придёт пустым — это надо
+    # отличать от сетевой ошибки, иначе чиним не то.
+    if [[ -z "$summary" ]] && printf '%s' "$response" | jq -e '.choices[0]' >/dev/null 2>&1; then
+        reason=$(printf '%s' "$response" | jq -r '.choices[0].finish_reason // "?"')
+        log WARN "пустой content (finish_reason=$reason) для: $url"
+    fi
 
     if [[ -z "$summary" ]]; then
         log ERROR "модель не ответила по: $url"
