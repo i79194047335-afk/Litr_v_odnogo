@@ -24,6 +24,7 @@ EVENTS="$HERE/knowledge/events.jsonl"          # для машин: одна с�
 LOG_FILE="$HERE/logs/run.log"
 
 MAX_CHARS=12000                    # потолок на версию страницы в промпте
+DIFF_LINES=40                      # сколько строк диффа класть в событие как доказательство
 TODAY="$(date -u +%Y-%m-%d)"
 
 mkdir -p "$SNAP_DIR" "$HERE/knowledge" "$HERE/logs"
@@ -172,12 +173,17 @@ printf '## %s — изменений: %s\n\n' "$TODAY" "$CHANGED" > "$BLOCK"
 summarized=0
 
 while IFS=$'\t' read -r url title section kind oldfile newfile; do
+    # Дифф считаем здесь, пока обе версии на месте: снимки не в git и старый
+    # затирается новым, так что без этого ни одно утверждение в журнале потом
+    # не перепроверить. Доказательство весит меньше пересказа.
     if [[ "$oldfile" != "-" && -f "$oldfile" ]]; then
+        evidence=$(diff -u "$oldfile" "$newfile" 2>/dev/null | tail -n +3 | head -n "$DIFF_LINES")
         prompt=$(printf 'Страница документации Lighter API ИЗМЕНИЛАСЬ.\nРаздел: %s\nНазвание: %s\nURL: %s\n\nОпиши КОНКРЕТНО, что изменилось по сути: новые или удалённые эндпоинты, параметры, поля, лимиты, значения. Отдельно отметь breaking changes — то, что сломает существующую интеграцию.\n\n--- СТАРАЯ ВЕРСИЯ ---\n%s\n\n--- НОВАЯ ВЕРСИЯ ---\n%s' \
             "$section" "$title" "$url" \
             "$(head -c "$MAX_CHARS" "$oldfile")" \
             "$(head -c "$MAX_CHARS" "$newfile")")
     else
+        evidence=""
         prompt=$(printf 'Появилась НОВАЯ страница документации Lighter API.\nРаздел: %s\nНазвание: %s\nURL: %s\n\nОпиши в 2-4 предложениях, о чём она и что важного в ней есть для разработчика торгового бота.\n\n--- СОДЕРЖИМОЕ ---\n%s' \
             "$section" "$title" "$url" \
             "$(head -c "$MAX_CHARS" "$newfile")")
@@ -256,8 +262,10 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
             --arg change "$kind" --arg k "$ckind" --arg s "$summary" \
             --argjson br "$breaking" \
             --argjson hl "$(printf '%s' "$parsed" | jq -c '.highlights // []' 2>/dev/null || echo '[]')" \
+            --arg ev "$evidence" \
             '{ts:$ts, source:"lighter-apidocs", url:$url, title:$title, section:$section,
-               change:$change, kind:$k, breaking:$br, highlights:$hl, summary:$s}' \
+               change:$change, kind:$k, breaking:$br, highlights:$hl, summary:$s,
+               evidence:$ev}' \
             >> "$EVENTS"
     fi
 
