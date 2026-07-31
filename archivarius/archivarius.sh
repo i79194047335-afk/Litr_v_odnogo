@@ -203,8 +203,10 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
         log WARN "пустой content (finish_reason=$reason) для: $url"
     fi
 
-    # Просили голый JSON, но модель может завернуть его в ```json — снимаем обёртку.
-    parsed=$(printf '%s' "$raw" | sed -e 's/^[[:space:]]*```\(json\)\{0,1\}//' -e 's/```[[:space:]]*$//' \
+    # Просили голый JSON, но модель обрамляет его чем попало: ```json, префиксом
+    # " в JSON." и прочим. Берём кусок от первой { до последней } — это переживает
+    # любую обёртку, в отличие от снятия конкретных маркеров.
+    parsed=$(printf '%s' "$raw" | tr '\n' ' ' | sed -e 's/^[^{]*//' -e 's/[^}]*$//' \
              | jq -c '{summary, kind, breaking, highlights}' 2>/dev/null)
 
     if [[ -n "$parsed" ]]; then
@@ -217,6 +219,19 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
         summary="$raw"
         ckind="?"
         breaking="false"
+    fi
+
+    # Модель иногда срывается в повтор одного слова на тысячу итераций. Такой
+    # текст не наблюдение, а мусор, и в базу знаний ему нельзя: место в логе.
+    if [[ -n "$summary" ]]; then
+        top_share=$(printf '%s' "$summary" | tr -s '[:space:]' '\n' | grep -c . || true)
+        if [[ "${top_share:-0}" -gt 40 ]]; then
+            dominant=$(printf '%s' "$summary" | tr -s '[:space:]' '\n' | sort | uniq -c | sort -rn | head -1 | awk '{print $1}')
+            if [[ $(( dominant * 100 / top_share )) -ge 50 ]]; then
+                log ERROR "ответ выродился в повтор ($dominant из $top_share слов) — отбрасываю: $url"
+                summary=""   # ниже это откатит снимок и повторит на следующем прогоне
+            fi
+        fi
     fi
 
     if [[ -z "$summary" ]]; then
@@ -232,7 +247,9 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
         summarized=$(( summarized + 1 ))
 
         # Машиночитаемое событие: одна строка на изменение, чтобы следующие
-        # агенты читали это пайпом, а не разбирали прозу.
+        # агенты читали это пайпом, а не разбирали прозу. Пишется и когда ответ
+        # не разобрался (kind="?") — иначе проза и JSONL расходятся, и потом
+        # непонятно, потерялась страница или её не было.
         jq -c -n \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg url "$url" --arg title "$title" --arg section "$section" \
