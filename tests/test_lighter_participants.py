@@ -132,6 +132,24 @@ def test_liquidation_is_marked():
     assert rec["kind"] == "liq"
 
 
+def test_liquidation_in_main_trades_array_is_marked():
+    """The case that actually happens on the wire, and the one the collector
+    got wrong for 31h (fixed 12958b1): a liquidation arrives in the `trades`
+    array, so the caller passes kind="trade", and only the record's own
+    `type` field says what it is. The pre-fix rule keyed off `kind` alone and
+    stored these unmarked; the older test above passes kind="liq" explicitly
+    and is green under BOTH the bug and the fix, so it never covered this.
+    """
+    rec = _normalize(1, wire_trade(type="liquidation"), "trade", keep_all=False)
+    assert rec["kind"] == "liq"
+
+
+def test_liquidation_marker_survives_keep_all():
+    rec = _normalize(1, wire_trade(type="liquidation"), "trade", keep_all=True)
+    assert rec["kind"] == "liq"
+    assert rec["type"] == "liquidation"
+
+
 def test_regular_trade_carries_no_kind_marker():
     """type='trade' already says it; a constant second field on 99% of records
     is pure bytes."""

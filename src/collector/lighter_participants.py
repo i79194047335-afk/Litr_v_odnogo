@@ -40,9 +40,14 @@ fields are likewise conditional. Everything here therefore stores what arrived
 and never invents a default — a `.get()` at read time is correct, a
 `dict[...]` is a bug.
 
-LIQUIDATIONS come down this same channel in a separate `liquidation_trades`
-array (also measured 2026-07-28 — no separate channel exists, and none needs to
-be found). They are stored in the same file with `"kind": "liq"`, because
+LIQUIDATIONS come down this same channel. The 2026-07-28 reading of this —
+"in a separate `liquidation_trades` array" — was WRONG and is kept here as a
+correction rather than deleted: that array is present in every frame and is
+always empty. Measured 2026-07-29 after the collector reported liq=0 for 31h
+while 112 liquidations sat on disk unmarked: they arrive in the main `trades`
+array carrying `type: "liquidation"`. The record's own type field is the
+signal; the array it was found in is not. The empty-array path is still read
+in case the venue starts using it. They are stored in the same file with `"kind": "liq"`, because
 forced flow is exactly the kind of participant behaviour this track is for and
 capturing it costs nothing.
 
