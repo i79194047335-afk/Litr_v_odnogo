@@ -1,3 +1,5 @@
+<!-- synthetic entries purged 2026-07-31: two hand-edited rate-limit
+     snapshots used to test the model were recorded as real observations -->
 # Lighter API — журнал изменений документации
 
 Ведёт Архивариус автоматически. Источник: <https://apidocs.lighter.xyz/llms.txt>
@@ -544,25 +546,7 @@ _Раздел: API Reference · тип: docs_
 
 Добавлена строка-подсказка с ссылкой на полный индекс документации (`llms.txt`) в начале страницы. Само API, эндпоинты, параметры, поля и лимиты не изменились.
 
-## 2026-07-30 — изменений: 1
-
-### [Rate Limits](https://apidocs.lighter.xyz/docs/rate-limits.md) — изменена
-_Раздел: Guides · тип: limits_
-
-Увеличен лимит запросов для **Standard accounts** в REST API с 10 до **60** weighted requests per rolling minute. Остальные лимиты и веса не изменились.
-
-## 2026-07-30 — изменений: 3
-
-### [Rate Limits](https://apidocs.lighter.xyz/docs/rate-limits.md) — изменена
-_Раздел: Guides_
-
-**Что изменилось:**
-
-- **REST API Endpoint Limits** — для **Standard accounts** увеличен лимит с **30** до **60** запросов в минуту (rolling minute). Остальные аккаунты (Builder, Plus, Premium) без изменений.
-
-**Breaking changes:** нет. Увеличение лимита не ломает существующую интеграцию.
-
-Все остальные разделы (WebSocket, SendTx/SendTxBatch, Explorer, Orders, Transaction Type Limits, поведение при превышении, Cooldown) — без изменений.
+## 2026-07-30 — изменений: 2
 
 ### [WebSocket](https://apidocs.lighter.xyz/docs/websocket-reference.md) — изменена
 _Раздел: Guides_
