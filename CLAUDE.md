@@ -12,7 +12,7 @@ git clone https://github.com/i79194047335-afk/Litr_v_odnogo /tmp/fresh
 cd /tmp/fresh && /root/projects/Litr_v_odnogo/.venv/bin/python -m pytest -q
 ```
 
-Ожидаемо: `324 passed`. Меньше — разбираться до любой другой работы.
+Ожидаемо: `339 passed`. Меньше — разбираться до любой другой работы.
 
 У Архивариуса своя сюита, вне pytest — `archivarius/test_archivarius.sh`,
 15 проверок, сети и ключа не требует.
@@ -75,6 +75,8 @@ GitHub — источник истины. VPS — раннер. «Локальн
 
 Claude **не выбирает** направление молча. Обнаружив развилку со
 стратегическими последствиями, Claude называет её и останавливается.
+
+Текущий трек — `docs/MINING.md`. Организация работы — `docs/WORKFLOW.md`.
 
 ---
 
