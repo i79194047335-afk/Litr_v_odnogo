@@ -89,6 +89,33 @@ is_degenerate "$short" \
     && fail "короткий ответ принят за деградацию" \
     || ok "короткий ответ не отбраковывается"
 
+echo "=== Переносимость awk ==="
+
+# На дефолтной Ubuntu awk — это mawk, где трёхаргументный match() (расширение
+# gawk) падает синтаксической ошибкой. Ноль строк на выходе неотличим от
+# "Lighter сменил формат индекса", так что агент молча останавливался бы каждый
+# день, не сообщая ничего осмысленного.
+AWK_PROG="$WORK/parser.awk"
+sed -n '/^awk .$/,/^. "\$INDEX"/p' "$AGENT" | sed -e '1s/^awk .//' -e '$d' > "$AWK_PROG"
+cat > "$WORK/idx_sample.txt" <<'SAMPLE'
+## Guides
+- [Get Started](https://apidocs.lighter.xyz/docs/get-started.md)
+- [Rate Limits](https://apidocs.lighter.xyz/docs/rate-limits.md): описание
+## API Reference
+- [status](https://apidocs.lighter.xyz/reference/status.md)
+- [Относительная](/local/path.md)
+SAMPLE
+
+for impl in gawk mawk awk; do
+    command -v "$impl" >/dev/null || { ok "$impl не установлен — пропуск"; continue; }
+    got=$("$impl" -f "$AWK_PROG" "$WORK/idx_sample.txt" 2>"$WORK/awk.err" | wc -l)
+    if [[ "$got" -eq 3 ]]; then
+        ok "$impl: индекс разобран (3 страницы, относительный URL отброшен)"
+    else
+        fail "$impl: разобрано $got вместо 3" "$(head -1 "$WORK/awk.err")"
+    fi
+done
+
 echo "=== Прогон агента на битых входных данных ==="
 
 # Локальный сервер вместо сети: агент должен вести себя одинаково с любым

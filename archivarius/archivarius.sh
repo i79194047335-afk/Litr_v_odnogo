@@ -66,11 +66,27 @@ fi
 
 # Строки вида: - [Заголовок](https://...md): описание
 # Вытаскиваем "url<TAB>заголовок", секцию берём из ближайшего "## " сверху.
+#
+# Режем строку через index/substr, а не трёхаргументным match() с массивом
+# захвата: тот есть только в gawk, а на дефолтной Ubuntu awk — это mawk, где
+# он падает с синтаксической ошибкой. Падение выглядело бы как ноль страниц,
+# то есть неотличимо от "Lighter сменил формат индекса", и агент молча
+# останавливался бы каждый день.
 PAGES="$WORK_DIR/pages.tsv"
 awk '
     /^## / { section = substr($0, 4); next }
-    match($0, /^- \[([^]]+)\]\((https?:[^)]+)\)/, m) {
-        printf "%s\t%s\t%s\n", m[2], m[1], section
+    /^- \[/ {
+        lb = index($0, "[");  rb = index($0, "](")
+        if (lb == 0 || rb == 0 || rb <= lb) next
+        title = substr($0, lb + 1, rb - lb - 1)
+
+        rest = substr($0, rb + 2)          # с начала URL
+        rp = index(rest, ")")
+        if (rp == 0) next
+        url = substr(rest, 1, rp - 1)
+
+        if (url !~ /^https?:/) next
+        printf "%s\t%s\t%s\n", url, title, section
     }
 ' "$INDEX" > "$PAGES"
 
