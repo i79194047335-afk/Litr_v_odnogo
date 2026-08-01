@@ -1,0 +1,18 @@
+market 24: 20260730 -> 20260731, min 50 fills on both days
+accounts on day A: 139   day B: 150   on both: 96
+
+role flips (>=0.95 <-> <=0.05): 0
+maker-share moved more than 0.1:    8 of 96 (8.3%)
+maker-share moved more than 0.2:    3 of 96 (3.1%)
+maker-share moved more than 0.4:    1 of 96 (1.0%)
+correlation of maker share across the two days: 0.989
+
+role classes on day B, by activity cutoff
+   cutoff   accts   pure mk   pure tk    middle  (% of two-sided notional)
+        1     857     23.2%     31.5%     45.3% (145 accts)
+       10     344     22.8%     30.5%     45.0% (92 accts)
+       50     150     21.9%     26.8%     43.2% (43 accts)
+      100     106     20.7%     24.9%     40.4% (26 accts)
+      500      38     12.9%     17.5%     31.6% (9 accts)
+
+flips by account type: n/a

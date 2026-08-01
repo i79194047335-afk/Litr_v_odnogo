@@ -1,0 +1,65 @@
+{
+  "hypothesis_id": "002",
+  "ran_at": "2026-08-01T21:48:55Z",
+  "model": "deepseek-v4-pro",
+  "temperature": 0.0,
+  "max_tokens": 16000,
+  "system_prompt_sha256": "06c43b8494bc1cf241d9ede1a034f59c4631bec66ab32d210859c40b05094fb1",
+  "user_prompt_sha256": "43577003637ecc7652bc83f1e0710646a194880fe859ad2d4966f8a1f72d504e",
+  "user_prompt_chars": 143046,
+  "hypothesis_file_sha256": "5910dfd9a99ab038093b0e77ba89b692810e6caba6d573add09f3c6d762929b2",
+  "evidence_files": [
+    "CONTEXT.md",
+    "CLAUDE.md",
+    "docs/START_participant_mining.md",
+    "src/analysis/participant_stats.py",
+    "src/analysis/report_participants.py",
+    "src/analysis/build_account_index.py",
+    "tests/test_participant_stats.py"
+  ],
+  "evidence_source": "H-file",
+  "response_sha256": "935c306c7750a4757150a6e01d55ab499242b75019e6eb34bfdaeff16444a08c",
+  "response_chars": 2523,
+  "finish_reason": "stop",
+  "usage": {
+    "prompt_tokens": 40609,
+    "completion_tokens": 4702,
+    "total_tokens": 45311,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 4096
+    },
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 40609
+  },
+  "unsealed_at": "2026-08-01T21:51:51Z",
+  "claude_verdict_sha256_at_unseal": "3e72e797669f64b66a747c3b4fe492d2d14ba79d1a126a9d81ddca08e31c2841",
+  "claude_verdict_chars_at_unseal": 3322,
+  "rebuttal": {
+    "ran_at": "2026-08-01T21:53:59Z",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.0,
+    "max_tokens": 16000,
+    "system_prompt_sha256": "1bc1caf63113a86460c99eae20774e8e5cc947b5cd20a9e069f47831e995145e",
+    "user_prompt_chars": 149123,
+    "claude_verdict_sha256_at_rebut": "3e72e797669f64b66a747c3b4fe492d2d14ba79d1a126a9d81ddca08e31c2841",
+    "response_sha256": "1fc198ee702aeed58a9405d807f25e21c19f7bde6f040181560c335d1ccad08b",
+    "response_chars": 3979,
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 42173,
+      "completion_tokens": 5052,
+      "total_tokens": 47225,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 4070
+      },
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 42173
+    }
+  }
+}
