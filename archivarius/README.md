@@ -104,9 +104,13 @@ jq -r '.kind' knowledge/events.jsonl | sort | uniq -c   # что меняетс�
 jq -r 'select(.kind=="limits") | .evidence' knowledge/events.jsonl
 ```
 
-Поля события: `ts`, `source`, `url`, `title`, `section`, `change`
+Поля события: `v`, `ts`, `source`, `url`, `title`, `section`, `change`
 («изменена» / «новая страница»), `kind`, `breaking`, `highlights[]`, `summary`,
 `evidence`.
+
+`v` — версия схемы, сейчас `1`. Потребитель обязан её проверять: формат будет
+меняться, и молчаливое чтение чужой версии — это разбор мусора под видом
+данных. Фильтр: `jq 'select(.v == 1)'`.
 
 `kind` — один из: `api` (эндпоинты, параметры, поля), `limits` (лимиты, квоты,
 тарифы), `behavior` (правила и поведение), `docs` (только текст и примеры),

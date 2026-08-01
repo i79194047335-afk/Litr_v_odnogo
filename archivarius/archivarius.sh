@@ -279,7 +279,7 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
             --argjson br "$breaking" \
             --argjson hl "$(printf '%s' "$parsed" | jq -c '.highlights // []' 2>/dev/null || echo '[]')" \
             --arg ev "$evidence" \
-            '{ts:$ts, source:"lighter-apidocs", url:$url, title:$title, section:$section,
+            '{v:1, ts:$ts, source:"lighter-apidocs", url:$url, title:$title, section:$section,
                change:$change, kind:$k, breaking:$br, highlights:$hl, summary:$s,
                evidence:$ev}' \
             >> "$EVENTS"
