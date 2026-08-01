@@ -6,10 +6,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/projects/Litr_v_odnogo
-# Market 1 (BTC) only to start: it is the market the whole backtest track used,
-# it carries ~2/3 of the tape volume, and one market is the cheapest way to
-# prove the collector before widening. Add ids here to widen.
-ExecStart=/root/projects/Litr_v_odnogo/.venv/bin/python -m src.collector.lighter_participants --markets 1
+# Markets 0 (ETH), 1 (BTC), 2 (SOL), 24 (HYPE). Market 1 came first — it is what
+# the backtest track used and it carries ~2/3 of the tape volume — and the rest
+# were added once the collector had proven itself. HYPE earns its place by being
+# unlike the others: its liquidation rate ran 0.686% of trades on Jul 29 against
+# BTC's 0.018%. Add ids here to widen.
+ExecStart=/root/projects/Litr_v_odnogo/.venv/bin/python -m src.collector.lighter_participants --markets 0 1 2 24
 Restart=always
 RestartSec=5
 # The collector handles SIGTERM itself: it cancels the reader, flushes the gzip
