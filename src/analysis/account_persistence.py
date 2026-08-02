@@ -220,6 +220,8 @@ def main() -> int:
     ap.add_argument("--day", help="YYYYMMDD of the tape to take ids from")
     ap.add_argument("--ids", type=int, nargs="+", help="explicit account indexes")
     ap.add_argument("--limit", type=int, help="check only the first N ids (sorted)")
+    ap.add_argument("--resume", action="store_true",
+                    help="reuse readings from an interrupted run")
     args = ap.parse_args()
 
     if not args.ids and not (args.market is not None and args.day):
@@ -239,8 +241,27 @@ def main() -> int:
     if not targets:
         sys.exit("nothing to check — no tape id is present in the cache")
 
+    # Readings are checkpointed so an interrupted run keeps its work. A full
+    # pass is ~45 minutes of network at DELAY per account; losing all of it to
+    # one timeout already happened once. This file is scratch evidence, never
+    # the cache being audited — the tool still writes nothing to
+    # data/account_index.json.
+    readings_path = CACHE.with_name("persistence_readings.json")
     fresh: dict[int, dict | None] = {}
     unreachable: list[int] = []
+    if args.resume and readings_path.exists():
+        saved = json.loads(readings_path.read_text())
+        fresh = {int(k): v for k, v in saved.get("fresh", {}).items()}
+        unreachable = list(saved.get("unreachable", []))
+        done = set(fresh) | set(unreachable)
+        targets = [i for i in targets if i not in done]
+        print(f"resuming: {len(done)} already read, {len(targets)} left")
+
+    def checkpoint() -> None:
+        readings_path.write_text(json.dumps(
+            {"fresh": {str(k): v for k, v in fresh.items()},
+             "unreachable": unreachable}, indent=1, sort_keys=True))
+
     for n, index in enumerate(targets, 1):
         reading, reached = fetch(index)
         if reached:
@@ -249,7 +270,9 @@ def main() -> int:
             unreachable.append(index)
         time.sleep(DELAY)
         if n % 200 == 0:
+            checkpoint()
             print(f"  {n}/{len(targets)}")
+    checkpoint()
 
     result = compare(cache, fresh, unreachable)
     report(result)
