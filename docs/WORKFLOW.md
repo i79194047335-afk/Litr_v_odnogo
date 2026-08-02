@@ -76,6 +76,7 @@
 | `pool_validation` | сверка PnL с витриной публичных пулов | `src/analysis/pool_validation.py` | `tests/test_pool_validation.py` (18) |
 | `behaviour_profile` | поведенческий профиль счёта + перм-статистика | `src/analysis/behaviour_profile.py` | `tests/test_behaviour_profile.py` (21) |
 | `book_format` | компактный формат книги + реплей и проверка непрерывности | `src/collector/book_format.py` | `tests/test_book_format.py` (11) |
+| `collector_health` | не встал ли сбор молча | `scripts/collector_health.py` | `tests/test_collector_health.py` (13) |
 | *(план)* `apiref` | выдача фрагмента свода по API | — | — |
 | *(план)* `xcheck` | сверка двух выходов по счёту | — | — |
 
