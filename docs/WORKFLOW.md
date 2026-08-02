@@ -72,6 +72,7 @@
 | `account_persistence` | значит ли `account_id` то же лицо, что и в день 1 | `src/analysis/account_persistence.py` | `tests/test_account_persistence.py` (11) |
 | `pnl_probe` | сходится ли реконструкция позиции с лентой | `src/analysis/pnl_probe.py` | `tests/test_pnl_probe.py` (14) |
 | `participant_pnl` | реализованный PnL по счетам из ленты | `src/analysis/participant_pnl.py` | `tests/test_participant_pnl.py` (11) |
+| `pnl_persistence` | воспроизводится ли ранжирование между днями | `src/analysis/pnl_persistence.py` | `tests/test_pnl_persistence.py` (11) |
 | *(план)* `apiref` | выдача фрагмента свода по API | — | — |
 | *(план)* `xcheck` | сверка двух выходов по счёту | — | — |
 
