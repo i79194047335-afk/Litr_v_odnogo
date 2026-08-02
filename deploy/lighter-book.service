@@ -1,0 +1,24 @@
+[Unit]
+Description=Lighter L2 order-book collector (order_book channel, stored verbatim)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/projects/Litr_v_odnogo
+# Same four markets as the trade tape (0 ETH, 1 BTC, 2 SOL, 24 HYPE) so book and
+# tape can be joined on (market, timestamp). Measured 2026-08-03: ~0.089 GB per
+# market per day gzipped, so all four run about 10.7 GB a month.
+ExecStart=/root/projects/Litr_v_odnogo/.venv/bin/python -m src.collector.lighter_book --markets 0 1 2 24
+Restart=always
+RestartSec=5
+# The collector handles SIGTERM itself: it cancels the reader, flushes the gzip
+# buffer and exits 0. Losing that flush costs the tail of every file, and for
+# book data the tail is not recoverable — collection is forward-only.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=append:/var/log/lighter-book.log
+StandardError=append:/var/log/lighter-book.log
+
+[Install]
+WantedBy=multi-user.target
