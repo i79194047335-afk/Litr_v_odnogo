@@ -14,7 +14,13 @@ from __future__ import annotations
 
 import math
 
-from src.analysis.pool_validation import PoolRow, binomial_tail, score
+from src.analysis.pool_validation import (
+    PoolRow,
+    binomial_tail,
+    binomial_tail_p,
+    match_rate_under_independence,
+    score,
+)
 
 
 def pool(apr: float, our: float, fills: int = 100, name: str = "p") -> PoolRow:
@@ -136,3 +142,39 @@ def test_zero_pnl_counts_as_not_positive():
     """A pool that realised nothing does not 'agree' with a positive APR."""
     assert not pool(+10.0, 0.0).agrees
     assert pool(-10.0, 0.0).agrees
+
+
+# --- the null rate must come from the data, not be assumed ------------------
+
+def test_shared_skew_raises_the_null_above_a_coin_flip():
+    """If both series are mostly positive, matching is easy without a relationship.
+
+    Nine of ten positive on each side: P(match) = 0.9*0.9 + 0.1*0.1 = 0.82.
+    A fair-coin p-value would call routine agreement significant.
+    """
+    rows = [pool(+1.0, +1.0) for _ in range(9)] + [pool(-1.0, -1.0)]
+
+    assert abs(match_rate_under_independence(rows) - 0.82) < 1e-12
+
+
+def test_balanced_marginals_reduce_to_the_coin_flip():
+    """Half positive on each side: 0.5*0.5 + 0.5*0.5 = 0.5, the fair coin."""
+    rows = [pool(+1.0, +1.0), pool(+1.0, -1.0), pool(-1.0, +1.0), pool(-1.0, -1.0)]
+
+    assert abs(match_rate_under_independence(rows) - 0.5) < 1e-12
+
+
+def test_corrected_p_is_reported_beside_the_naive_one():
+    rows = [pool(+1.0, +1.0) for _ in range(9)] + [pool(-1.0, -1.0)]
+
+    s = score(rows)
+
+    assert s["agree"] == 10
+    assert abs(s["null_rate"] - 0.82) < 1e-12
+    # 0.82^10 = 0.1374..., versus 0.5^10 = 0.00098 under a fair coin.
+    assert abs(s["p_corrected"] - 0.82 ** 10) < 1e-12
+    assert s["p_corrected"] > s["p"]
+
+
+def test_generalised_tail_matches_the_fair_coin_case_at_p_half():
+    assert abs(binomial_tail_p(9, 11, 0.5) - binomial_tail(9, 11)) < 1e-15

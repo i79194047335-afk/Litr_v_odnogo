@@ -1,0 +1,213 @@
+{
+ "days": [
+  "20260728",
+  "20260729",
+  "20260730",
+  "20260731",
+  "20260801",
+  "20260802"
+ ],
+ "markets": [
+  0,
+  1,
+  2,
+  24
+ ],
+ "min_fills": 20,
+ "pools_enumerated": 319,
+ "all_traded": {
+  "n": 11,
+  "agree": 9,
+  "p": 0.03271484375,
+  "null_rate": 0.5041322314049587,
+  "p_corrected": 0.03476247653801703,
+  "rho": 0.5181818181818182
+ },
+ "min_fills_subset": {
+  "n": 9,
+  "agree": 9,
+  "p": 0.001953125,
+  "null_rate": 0.5061728395061729,
+  "p_corrected": 0.0021811701247426703,
+  "rho": 0.7166666666666667
+ },
+ "rows": [
+  {
+   "account_index": 281474976710654,
+   "name": "Lighter Liquidity Provider (LLP)",
+   "apr": 11.039485173317308,
+   "sharpe": 3.973980668117839,
+   "status": 0,
+   "our_pnl": 22136.719236862868,
+   "fills": 12644,
+   "notional": 60755566.88325126,
+   "maker_share": 1.0,
+   "markets": [
+    0,
+    1,
+    2,
+    24
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976688087,
+   "name": "Edge & Hedge (L/S Factors)",
+   "apr": 12.727443162151287,
+   "sharpe": 1.0985756545405427,
+   "status": 0,
+   "our_pnl": 7461.939003154217,
+   "fills": 3086,
+   "notional": 1014625.8089189996,
+   "maker_share": 1.0,
+   "markets": [
+    0,
+    1,
+    2,
+    24
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976625478,
+   "name": "Alleged Alpha",
+   "apr": -12.071272082834676,
+   "sharpe": -0.3696534195466022,
+   "status": 0,
+   "our_pnl": -1885.2673178024456,
+   "fills": 258,
+   "notional": 133158.68145400003,
+   "maker_share": 0.9573643410852714,
+   "markets": [
+    0,
+    1,
+    2,
+    24
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976644517,
+   "name": "DSC - L Strategy",
+   "apr": 322.6593001770923,
+   "sharpe": 0.45868937768391294,
+   "status": 0,
+   "our_pnl": 1390.3687718374167,
+   "fills": 167,
+   "notional": 307273.03901,
+   "maker_share": 0.2874251497005988,
+   "markets": [
+    24
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976639900,
+   "name": "Silentist",
+   "apr": -2.727705570390989,
+   "sharpe": 0.12747882013061415,
+   "status": 0,
+   "our_pnl": -36.165498297994546,
+   "fills": 154,
+   "notional": 4346.977042,
+   "maker_share": 0.8961038961038961,
+   "markets": [
+    0,
+    1,
+    2,
+    24
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976543116,
+   "name": "Candle Effect v2",
+   "apr": 30.021252410919363,
+   "sharpe": 12.312044230318772,
+   "status": 0,
+   "our_pnl": 8.058805112260778,
+   "fills": 89,
+   "notional": 10866.766399,
+   "maker_share": 0.0,
+   "markets": [
+    24
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976690488,
+   "name": "Algorithmic L/S | Big Brain Research",
+   "apr": -4.0421948882374465,
+   "sharpe": 0.15952731967563408,
+   "status": 0,
+   "our_pnl": -13.943702418463165,
+   "fills": 60,
+   "notional": 800.102812,
+   "maker_share": 0.0,
+   "markets": [
+    0
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976593834,
+   "name": "PHP Trading Desk (BTC/USDC)",
+   "apr": -7.720222311008783,
+   "sharpe": 0.535743667472581,
+   "status": 0,
+   "our_pnl": -284.4709583776337,
+   "fills": 38,
+   "notional": 437438.681122,
+   "maker_share": 0.0,
+   "markets": [
+    1
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976539113,
+   "name": "Syzygy Strategy",
+   "apr": 56.498796429630964,
+   "sharpe": 1.9651550560796773,
+   "status": 0,
+   "our_pnl": 900.5528546688652,
+   "fills": 33,
+   "notional": 86596.186217,
+   "maker_share": 0.0,
+   "markets": [
+    1
+   ],
+   "agrees": true
+  },
+  {
+   "account_index": 281474976534461,
+   "name": "Dragon",
+   "apr": 86.4321127538472,
+   "sharpe": 1.1070012910662252,
+   "status": 0,
+   "our_pnl": -110.95355465976948,
+   "fills": 4,
+   "notional": 4033.442436,
+   "maker_share": 0.0,
+   "markets": [
+    0
+   ],
+   "agrees": false
+  },
+  {
+   "account_index": 281474976528251,
+   "name": "EAGLE",
+   "apr": -3.407965333797735,
+   "sharpe": -0.3860727653322274,
+   "status": 0,
+   "our_pnl": 68.75310499999996,
+   "fills": 2,
+   "notional": 2629.192389,
+   "maker_share": 0.0,
+   "markets": [
+    0
+   ],
+   "agrees": false
+  }
+ ]
+}

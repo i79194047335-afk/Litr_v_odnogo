@@ -162,16 +162,47 @@ def collect(pools: dict[int, dict], days: list[str], markets: list[int]) -> dict
     return rows
 
 
+def binomial_tail_p(k: int, n: int, p: float) -> float:
+    """P(at least k of n | success probability p). Generalises the fair-coin case."""
+    if n <= 0:
+        return float("nan")
+    return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k, n + 1))
+
+
+def match_rate_under_independence(rows: list[PoolRow]) -> float:
+    """P(two signs coincide) given each side's own rate of being positive.
+
+    The fair-coin null assumes agreement is a 50/50 event. It is not, if both
+    series are lopsided the same way: were 90% of APRs and 90% of our figures
+    positive, signs would match ~82% of the time with no relationship at all.
+    This computes the honest baseline from the observed marginals, so the
+    p-value cannot be inflated by a skew shared by both series.
+    """
+    if not rows:
+        return float("nan")
+    pa = sum(1 for r in rows if r.apr > 0) / len(rows)
+    po = sum(1 for r in rows if r.our_pnl > 0) / len(rows)
+    return pa * po + (1 - pa) * (1 - po)
+
+
 def score(rows: list[PoolRow]) -> dict:
-    """Sign agreement, its p-value, and rank correlation. Pure — testable."""
+    """Sign agreement, its p-value, and rank correlation. Pure — testable.
+
+    Both nulls are reported: the fair coin, and the marginal-corrected rate.
+    Quoting only the first would let a shared skew masquerade as agreement.
+    """
     traded = [r for r in rows if r.fills > 0]
     if not traded:
-        return {"n": 0, "agree": 0, "p": float("nan"), "rho": float("nan")}
+        return {"n": 0, "agree": 0, "p": float("nan"), "rho": float("nan"),
+                "p_corrected": float("nan"), "null_rate": float("nan")}
     agree = sum(1 for r in traded if r.agrees)
+    null_rate = match_rate_under_independence(traded)
     return {
         "n": len(traded),
         "agree": agree,
         "p": binomial_tail(agree, len(traded)),
+        "null_rate": null_rate,
+        "p_corrected": binomial_tail_p(agree, len(traded), null_rate),
         "rho": spearman([r.apr for r in traded], [r.our_pnl for r in traded]),
     }
 
@@ -196,7 +227,10 @@ def report(rows: dict[int, PoolRow], min_fills: int) -> None:
         if not s["n"]:
             continue
         print(f"\n{label}: {s['agree']}/{s['n']} agree in sign, "
-              f"P = {s['p']:.4f}, Spearman = {s['rho']:+.4f}")
+              f"Spearman = {s['rho']:+.4f}")
+        print(f"  P = {s['p']:.4f} (fair coin), "
+              f"P = {s['p_corrected']:.4f} (null rate {s['null_rate']:.4f} "
+              f"from the observed marginals)")
 
     print("\nNOTE: APR is annual, net of operator fee, over the pool's lifetime "
           "and\nall ~90 markets. Ours is these days, gross, realised-only, on the "
@@ -210,6 +244,8 @@ def main() -> int:
     ap.add_argument("--min-fills", type=int, default=20)
     ap.add_argument("--cache", type=Path,
                     help="read/write the enumeration here instead of refetching")
+    ap.add_argument("--out", type=Path,
+                    help="write the full result here so the numbers leave an artifact")
     args = ap.parse_args()
 
     if args.cache and args.cache.exists():
@@ -224,6 +260,23 @@ def main() -> int:
 
     rows = collect(pools, args.days, args.markets)
     report(rows, args.min_fills)
+
+    if args.out:
+        traded = [r for r in rows.values() if r.fills > 0]
+        args.out.write_text(json.dumps({
+            "days": args.days, "markets": args.markets,
+            "min_fills": args.min_fills,
+            "pools_enumerated": len(rows),
+            "all_traded": score(traded),
+            "min_fills_subset": score([r for r in traded if r.fills >= args.min_fills]),
+            "rows": [{"account_index": r.account_index, "name": r.name,
+                      "apr": r.apr, "sharpe": r.sharpe, "status": r.status,
+                      "our_pnl": r.our_pnl, "fills": r.fills,
+                      "notional": r.notional, "maker_share": r.maker_share,
+                      "markets": sorted(r.markets), "agrees": r.agrees}
+                     for r in sorted(traded, key=lambda x: -x.fills)],
+        }, indent=1))
+        print(f"\nwritten: {args.out}")
     return 0
 
 
