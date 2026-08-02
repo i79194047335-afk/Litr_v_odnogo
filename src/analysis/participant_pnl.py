@@ -25,11 +25,13 @@ Two properties of the tape shape the design:
   against the venue's basis, which is right. What we cannot know is PnL
   realised before the tape began, and the totals here never claim to.
 
-Fees are excluded: the unit of `maker_fee`/`taker_fee` is undocumented and not
-established by measurement (API_DIGEST.md). Assuming cents implies fees up to
-50% of trade size, which is false, so no assumption is made. **These figures
-are gross.** For makers, whose median implied fee is not negligible, gross and
-net ranking can differ.
+Fees are excluded, and on this venue that makes no material difference.
+`maker_fee`/`taker_fee` are *rates* scaled by 1e7, not amounts: the observed
+values match Lighter's published tiers exactly (28 -> 0.0028%, 196 -> 0.0196%,
+50 -> 0.5bps). Standard accounts pay 0% both sides, which is why the field is
+simply absent on most fills. Measured on market 24 / 20260731: total fees of
+379.38 against 74,641,136 of notional, and the top-20 by gross is identical to
+the top-20 by net, same order. See API_DIGEST.md.
 
 **Realised PnL does not sum to zero over a window, and should not be read as
 if it did.** Derivatives are zero-sum, but only over closed positions. Within
