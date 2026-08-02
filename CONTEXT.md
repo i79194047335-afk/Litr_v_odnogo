@@ -1,5 +1,19 @@
 # Litr_v_odnogo — project context / handoff
 
+> **Status 2026-08-01: this file is a July snapshot. Do not treat it as current.**
+> It stops at 2026-07-28 and knows nothing of what came after — the archivarius
+> agent, the participant analysis, H-002, or the documents below. It is kept as
+> the history of how the project got here, not as its present state.
+>
+> Current, in reading order:
+> - `CLAUDE.md` — working rules, read first
+> - `docs/MINING.md` — the active track (participant mining)
+> - `docs/WORKFLOW.md` — layers, tools vs agents, protocol procedure
+> - `docs/API_DIGEST.md` — what is established about the Lighter API
+> - `hypotheses/H-00*.result.md` — closed hypotheses and their verdicts
+>
+> Where this file disagrees with those, they win.
+
 > Read this file end-to-end when resuming work in a new chat. For deeper
 > research see `docs/ytc_scalper_skeleton.md` and `docs/kb_mrcvokka_diary.md`.
 > Lance Beggs' original articles (Russian translations) are also available
