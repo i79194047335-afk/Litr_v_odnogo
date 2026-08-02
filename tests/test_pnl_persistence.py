@@ -146,3 +146,61 @@ def test_no_common_accounts_yields_no_measurement():
     assert s.sign_agree == 0
     import math
     assert math.isnan(s.spearman)
+
+
+# --- multi-day windows ------------------------------------------------------
+
+def test_window_threshold_applies_to_the_window_not_to_each_day(monkeypatch, tmp_path):
+    """An account trading 15 fills a day for three days has 45 fills, not 0.
+
+    Applying `min_fills` per day would discard it and rebuild exactly the
+    eligibility artifact that a longer window exists to escape.
+    """
+    from src.analysis import pnl_persistence as mod
+
+    class FakeRow:
+        def __init__(self, account_id, realised, fills):
+            self.account_id, self.realised, self.fills = account_id, realised, fills
+
+    per_day = {
+        "d1": {1: FakeRow(1, 10.0, 15), 2: FakeRow(2, -5.0, 1)},
+        "d2": {1: FakeRow(1, 20.0, 15), 2: FakeRow(2, -5.0, 1)},
+        "d3": {1: FakeRow(1, 30.0, 15), 2: FakeRow(2, -5.0, 1)},
+    }
+    calls = []
+
+    monkeypatch.setattr(mod, "TAPE_DIR", tmp_path)
+    for day in per_day:
+        (tmp_path / f"trades_full_9_{day}.jsonl.gz").write_bytes(b"")
+    monkeypatch.setattr(mod, "read_tape", lambda paths: calls.append(paths) or [])
+    monkeypatch.setattr(mod, "accumulate_pnl",
+                        lambda recs: per_day[calls[-1][0].name.split("_")[-1].split(".")[0]])
+
+    out = mod.window_pnl(9, ["d1", "d2", "d3"], min_fills=20)
+
+    # Account 1: 45 fills over the window, PnL 10+20+30 = 60. Kept.
+    # Account 2: 3 fills over the window. Dropped.
+    assert out == {1: 60.0}
+
+
+def test_window_sums_pnl_across_days(monkeypatch, tmp_path):
+    """A losing day and a winning day net out, rather than counting separately."""
+    from src.analysis import pnl_persistence as mod
+
+    class FakeRow:
+        def __init__(self, account_id, realised, fills):
+            self.account_id, self.realised, self.fills = account_id, realised, fills
+
+    per_day = {"d1": {7: FakeRow(7, -100.0, 30)}, "d2": {7: FakeRow(7, +250.0, 30)}}
+    calls = []
+
+    monkeypatch.setattr(mod, "TAPE_DIR", tmp_path)
+    for day in per_day:
+        (tmp_path / f"trades_full_9_{day}.jsonl.gz").write_bytes(b"")
+    monkeypatch.setattr(mod, "read_tape", lambda paths: calls.append(paths) or [])
+    monkeypatch.setattr(mod, "accumulate_pnl",
+                        lambda recs: per_day[calls[-1][0].name.split("_")[-1].split(".")[0]])
+
+    out = mod.window_pnl(9, ["d1", "d2"], min_fills=20)
+
+    assert out == {7: 150.0}

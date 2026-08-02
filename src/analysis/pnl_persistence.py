@@ -38,6 +38,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gc
 import random
 import statistics
 import sys
@@ -108,6 +109,30 @@ def day_pnl(market: int, day: str, min_fills: int) -> dict[int, float]:
         sys.exit(f"no tape at {path}")
     rows = accumulate_pnl(read_tape([path]))
     return {r.account_id: r.realised for r in rows.values() if r.fills >= min_fills}
+
+
+def window_pnl(market: int, days: list[str], min_fills: int) -> dict[int, float]:
+    """Total realised PnL per account over several days treated as one window.
+
+    The threshold applies to the window's total fill count, not to each day
+    separately. Filtering per day would rebuild the very thing a longer window
+    is meant to escape: an account trading 15 fills a day for three days is a
+    real participant with 45 fills, and per-day filtering would discard it.
+
+    Days are read one at a time and released. A market-1 day is ~1.6M records
+    and holding several at once exhausts the box.
+    """
+    totals: dict[int, float] = {}
+    fills: dict[int, int] = {}
+    for day in days:
+        path = TAPE_DIR / f"trades_full_{market}_{day}.jsonl.gz"
+        if not path.exists():
+            sys.exit(f"no tape at {path}")
+        for row in accumulate_pnl(read_tape([path])).values():
+            totals[row.account_id] = totals.get(row.account_id, 0.0) + row.realised
+            fills[row.account_id] = fills.get(row.account_id, 0) + row.fills
+        gc.collect()
+    return {a: v for a, v in totals.items() if fills.get(a, 0) >= min_fills}
 
 
 def compare(a: dict[int, float], b: dict[int, float], day_a: str, day_b: str,
@@ -195,14 +220,31 @@ def main() -> int:
     ap.add_argument("--min-fills", type=int, default=20)
     ap.add_argument("--draws", type=int, default=DRAWS)
     ap.add_argument("--seed", type=int, default=SEED)
+    ap.add_argument("--split", action="store_true",
+                    help="compare two multi-day windows instead of consecutive days")
     args = ap.parse_args()
 
     if len(args.days) < 2:
         ap.error("need at least two days")
 
-    pnl = {d: day_pnl(args.market, d, args.min_fills) for d in args.days}
     print(f"market {args.market}, min_fills={args.min_fills}, "
-          f"top={args.top}, draws={args.draws}, seed={args.seed}\n")
+          f"top={args.top}, draws={args.draws}, seed={args.seed}")
+
+    if args.split:
+        # Two multi-day windows instead of consecutive day pairs. The question
+        # is whether ranking is stable at a longer horizon, not whether one day
+        # predicts the next.
+        half = len(args.days) // 2
+        first, second = args.days[:half], args.days[half:]
+        print(f"windows: {'+'.join(first)}  vs  {'+'.join(second)}\n")
+        a = window_pnl(args.market, first, args.min_fills)
+        b = window_pnl(args.market, second, args.min_fills)
+        report(compare(a, b, '+'.join(first), '+'.join(second),
+                       args.top, args.draws, args.seed))
+        return 0
+
+    print()
+    pnl = {d: day_pnl(args.market, d, args.min_fills) for d in args.days}
     for x, y in zip(args.days, args.days[1:]):
         report(compare(pnl[x], pnl[y], x, y, args.top, args.draws, args.seed))
     return 0
