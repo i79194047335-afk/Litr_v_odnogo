@@ -217,6 +217,133 @@ else
     fail "модель недоступна" "снимок затёрт — правка больше не всплывёт"
 fi
 
+echo "=== Уведомление при breaking ==="
+
+# Агент, который нашёл ломающее изменение и промолчал, бесполезен: журнал надо
+# пойти и открыть. Здесь модель заменена заглушкой, отдающей breaking: true,
+# а канал доставки — скриптом, который лишь записывает то, что ему передали.
+#
+# Заглушка API отдаёт ответ в форме DeepSeek: choices[0].message.content.
+cat > "$WORK/fake_api.py" <<'PY'
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+PORT = int(sys.argv[1])
+BODY = json.dumps({"summary": "Удалён эндпоинт /v1/orders",
+                   "kind": "api", "breaking": True,
+                   "highlights": ["endpoint removed"]})
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        out = json.dumps({"choices": [{"message": {"content": BODY}}]}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+    def log_message(self, *a): pass
+
+HTTPServer(('127.0.0.1', PORT), H).serve_forever()
+PY
+python3 "$WORK/fake_api.py" 8732 >/dev/null 2>&1 &
+API_PID=$!
+trap 'rm -rf "$WORK"; kill $SRV_PID $API_PID 2>/dev/null' EXIT
+for _ in $(seq 30); do
+    curl -s -o /dev/null --max-time 1 -X POST http://127.0.0.1:8732/ && break
+    sleep 0.1
+done
+
+# Песочница с подменённой моделью и каналом доставки.
+setup_notify_box() {  # $1 = имя, $2 = код возврата канала
+    local box="$WORK/$1"
+    rm -rf "$box"; mkdir -p "$box"
+    sed -e "s|^INDEX_URL=.*|INDEX_URL=\"http://127.0.0.1:8731/llms.txt\"|" \
+        -e "s|^API_URL=.*|API_URL=\"http://127.0.0.1:8732/\"|" \
+        "$AGENT" > "$box/archivarius.sh"
+    chmod +x "$box/archivarius.sh"
+    printf 'sk-stub\n' > "$box/.key"
+    { printf '#!/bin/sh\n'
+      printf 'printf "%%s" "$1" > "%s/notified.sender"\n' "$box"
+      printf 'cat > "%s/notified.body"\n' "$box"
+      printf 'exit %s\n' "$2"
+    } > "$box/notify.sh"
+    chmod +x "$box/notify.sh"
+    printf '%s' "$box"
+}
+
+run_notify_box() {
+    local box="$1"
+    ( cd "$box" && env -u DEEPSEEK_API_KEY DEEPSEEK_KEY_FILE="$box/.key" \
+        NOTIFY_CMD="$box/notify.sh" timeout 60 ./archivarius.sh 2>&1 )
+}
+
+{ printf '## Guides\n'
+  printf -- '- [Живая](http://127.0.0.1:8731/live.md)\n'
+} > "$SRV_ROOT/llms.txt"
+
+# 7. breaking: true — канал обязан быть вызван, и с содержательным текстом.
+box=$(setup_notify_box notify_ok 0)
+printf 'версия один\n' > "$SRV_ROOT/live.md"
+run_notify_box "$box" >/dev/null           # первый прогон: только слепок
+printf 'версия два, эндпоинт удалён\n' > "$SRV_ROOT/live.md"
+out=$(run_notify_box "$box")
+if [[ -f "$box/notified.body" ]] \
+   && grep -q "BREAKING" "$box/notified.body" \
+   && [[ "$(cat "$box/notified.sender")" == "archivarius" ]] \
+   && grep -q "уведомление отправлено" <<<"$out"; then
+    ok "breaking: уведомление отправлено с именем отправителя"
+else
+    fail "breaking: уведомление" "файл: $([[ -f "$box/notified.body" ]] && echo есть || echo нет); $(grep -o 'уведомлени.*' <<<"$out")"
+fi
+
+# 8. Канал упал — прогон обязан завершиться успешно, но пожаловаться в лог.
+#    Молчаливый провал доставки неотличим от «изменений не было».
+box=$(setup_notify_box notify_fail 3)
+printf 'версия один\n' > "$SRV_ROOT/live.md"
+run_notify_box "$box" >/dev/null
+printf 'версия два, эндпоинт удалён\n' > "$SRV_ROOT/live.md"
+out=$(run_notify_box "$box"); rc=$?
+if [[ "$rc" -eq 0 ]] && grep -q "уведомление НЕ отправлено (код 3)" <<<"$out"; then
+    ok "канал упал: прогон цел, провал доставки виден в логе"
+else
+    fail "канал упал" "rc=$rc; $(grep -o 'уведомлени.*' <<<"$out")"
+fi
+
+# 9. Без breaking канал не дёргается вовсе — иначе алерты обесценятся.
+box=$(setup_notify_box notify_quiet 0)
+cat > "$WORK/fake_api_quiet.py" <<'PY'
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+BODY = json.dumps({"summary": "Опечатка", "kind": "cosmetic",
+                   "breaking": False, "highlights": []})
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        out = json.dumps({"choices": [{"message": {"content": BODY}}]}).encode()
+        self.send_response(200); self.send_header('Content-Length', str(len(out)))
+        self.end_headers(); self.wfile.write(out)
+    def log_message(self, *a): pass
+HTTPServer(('127.0.0.1', 8733), H).serve_forever()
+PY
+python3 "$WORK/fake_api_quiet.py" >/dev/null 2>&1 &
+QUIET_PID=$!
+trap 'rm -rf "$WORK"; kill $SRV_PID $API_PID $QUIET_PID 2>/dev/null' EXIT
+for _ in $(seq 30); do
+    curl -s -o /dev/null --max-time 1 -X POST http://127.0.0.1:8733/ && break
+    sleep 0.1
+done
+sed -i "s|^API_URL=.*|API_URL=\"http://127.0.0.1:8733/\"|" "$box/archivarius.sh"
+printf 'версия один\n' > "$SRV_ROOT/live.md"
+run_notify_box "$box" >/dev/null
+printf 'версия два, опечатка исправлена\n' > "$SRV_ROOT/live.md"
+run_notify_box "$box" >/dev/null
+if [[ ! -f "$box/notified.body" ]]; then
+    ok "не-breaking: канал не вызывается"
+else
+    fail "не-breaking" "уведомление ушло на косметическую правку"
+fi
+
 printf '\n%s\n' "----------------------------------------"
 printf 'пройдено: %d, провалено: %d\n' "$passed" "$failed"
 [[ "$failed" -eq 0 ]]

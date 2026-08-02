@@ -22,6 +22,7 @@ SNAP_DIR="$STATE_DIR/snapshots"
 CHANGELOG="$HERE/knowledge/api_changelog.md"   # для человека
 EVENTS="$HERE/knowledge/events.jsonl"          # для машин: одна строка на изменение
 LOG_FILE="$HERE/logs/run.log"
+NOTIFY="${NOTIFY_CMD:-$HERE/../scripts/notify.sh}"   # канал доставки; переопределяется в тестах
 
 MAX_CHARS=12000                    # потолок на версию страницы в промпте
 DIFF_LINES=40                      # сколько строк диффа класть в событие как доказательство
@@ -297,7 +298,25 @@ log INFO "описано моделью $summarized из $CHANGED изменён
 # Сводка по breaking — чтобы главное было видно в cron.log, не открывая журнал.
 if [[ -s "$EVENTS" ]]; then
     today_breaking=$(jq -r --arg d "$TODAY" 'select(.breaking == true and (.ts | startswith($d))) | .title' "$EVENTS" 2>/dev/null | paste -sd', ')
-    [[ -n "$today_breaking" ]] && log WARN "BREAKING CHANGES: $today_breaking"
+    if [[ -n "$today_breaking" ]]; then
+        log WARN "BREAKING CHANGES: $today_breaking"
+        # Агент сам находит человека. Без этого он живёт на сервере и молчит:
+        # запись в файл — не уведомление, её надо пойти и открыть.
+        # Доставка не влияет на прогон (снимки уже записаны), но её провал
+        # обязан быть виден в логе — иначе молчание неотличимо от «всё тихо».
+        if [[ -x "$NOTIFY" ]]; then
+            notify_rc=0
+            printf 'BREAKING в документации Lighter API:\n%s\n\nЖурнал: %s' \
+                "$today_breaking" "$CHANGELOG" | "$NOTIFY" archivarius 2>/dev/null || notify_rc=$?
+            if [[ $notify_rc -eq 0 ]]; then
+                log INFO "уведомление отправлено"
+            else
+                log WARN "уведомление НЕ отправлено (код $notify_rc) — сообщение только в журнале"
+            fi
+        else
+            log WARN "канал доставки недоступен ($NOTIFY) — сообщение только в журнале"
+        fi
+    fi
 fi
 
 log INFO "=== готово ==="
