@@ -74,6 +74,7 @@
 | `participant_pnl` | реализованный PnL по счетам из ленты | `src/analysis/participant_pnl.py` | `tests/test_participant_pnl.py` (11) |
 | `pnl_persistence` | воспроизводится ли ранжирование между днями | `src/analysis/pnl_persistence.py` | `tests/test_pnl_persistence.py` (11) |
 | `pool_validation` | сверка PnL с витриной публичных пулов | `src/analysis/pool_validation.py` | `tests/test_pool_validation.py` (18) |
+| `behaviour_profile` | поведенческий профиль счёта + перм-статистика | `src/analysis/behaviour_profile.py` | `tests/test_behaviour_profile.py` (21) |
 | *(план)* `apiref` | выдача фрагмента свода по API | — | — |
 | *(план)* `xcheck` | сверка двух выходов по счёту | — | — |
 
