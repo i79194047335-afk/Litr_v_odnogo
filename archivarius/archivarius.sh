@@ -269,6 +269,14 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
     else
         summarized=$(( summarized + 1 ))
 
+        # При ответе прозой $parsed пуст, и `jq .highlights` по пустому входу
+        # завершается УСПЕШНО, ничего не напечатав — из-за чего `|| echo '[]'`
+        # не срабатывает, а `--argjson hl ""` роняет jq и событие не пишется.
+        # Проза при этом уже в журнале: выходы расходятся молча. Найдено
+        # 2026-08-03 тестом Телеграфа на том же коде; здесь тот же дефект.
+        highlights=$(printf '%s' "$parsed" | jq -c '.highlights // []' 2>/dev/null)
+        [[ -z "$highlights" ]] && highlights='[]'
+
         # Машиночитаемое событие: одна строка на изменение, чтобы следующие
         # агенты читали это пайпом, а не разбирали прозу. Пишется и когда ответ
         # не разобрался (kind="?") — иначе проза и JSONL расходятся, и потом
@@ -278,7 +286,7 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
             --arg url "$url" --arg title "$title" --arg section "$section" \
             --arg change "$kind" --arg k "$ckind" --arg s "$summary" \
             --argjson br "$breaking" \
-            --argjson hl "$(printf '%s' "$parsed" | jq -c '.highlights // []' 2>/dev/null || echo '[]')" \
+            --argjson hl "$highlights" \
             --arg ev "$evidence" \
             '{v:1, ts:$ts, source:"lighter-apidocs", url:$url, title:$title, section:$section,
                change:$change, kind:$k, breaking:$br, highlights:$hl, summary:$s,
