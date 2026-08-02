@@ -69,6 +69,14 @@
 | `report_participants` | отчёт по рынку/дню | `src/analysis/report_participants.py` | — (долг) |
 | `role_persistence` | устойчивость ролей между днями | `src/analysis/role_persistence.py` | — (долг) |
 | `build_account_index` | справочник `account_type` из API | `src/analysis/build_account_index.py` | — (долг) |
+| `account_persistence` | значит ли `account_id` то же лицо, что и в день 1 | `src/analysis/account_persistence.py` | `tests/test_account_persistence.py` (11) |
+| `pnl_probe` | сходится ли реконструкция позиции с лентой | `src/analysis/pnl_probe.py` | `tests/test_pnl_probe.py` (14) |
+| `participant_pnl` | реализованный PnL по счетам из ленты | `src/analysis/participant_pnl.py` | `tests/test_participant_pnl.py` (11) |
+| `pnl_persistence` | воспроизводится ли ранжирование между днями | `src/analysis/pnl_persistence.py` | `tests/test_pnl_persistence.py` (11) |
+| `pool_validation` | сверка PnL с витриной публичных пулов | `src/analysis/pool_validation.py` | `tests/test_pool_validation.py` (18) |
+| `behaviour_profile` | поведенческий профиль счёта + перм-статистика | `src/analysis/behaviour_profile.py` | `tests/test_behaviour_profile.py` (21) |
+| `book_format` | компактный формат книги + реплей и проверка непрерывности | `src/collector/book_format.py` | `tests/test_book_format.py` (11) |
+| `collector_health` | не встал ли сбор молча | `scripts/collector_health.py` | `tests/test_collector_health.py` (13) |
 | *(план)* `apiref` | выдача фрагмента свода по API | — | — |
 | *(план)* `xcheck` | сверка двух выходов по счёту | — | — |
 
@@ -109,7 +117,7 @@
 |---|---|---|
 | Архивариус | работает, cron 06:00 | дельта по докам Lighter |
 | Справочник по API | не начат | свод текущего состояния (см. §5) |
-| Стакан | отложен | `docs/MICROSTRUCTURE_PIPELINE.md` |
+| Стакан | **сбор идёт с 2026-08-03** | `src/collector/lighter_book.py`, план — `docs/MICROSTRUCTURE_PIPELINE.md` |
 | Киты и креветки | не начат | классификация участников |
 | Аномалии | не начат | статистические выбросы |
 | Проверка кода | не начат | ревью перед мержем |

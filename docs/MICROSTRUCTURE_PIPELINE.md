@@ -1,9 +1,19 @@
 # Microstructure research pipeline — design
 
-Status: **design + step 1 only**. Written 2026-07-24 after the range-bar /
-swing track was shown to have no exploitable edge at the one scale it was
-ever tested on. This document is the plan; only the WS probe (step 1 of the
-capture layer) exists in code so far.
+Status: **capture layer running since 2026-08-03; everything downstream is
+still design.** Written 2026-07-24 after the range-bar / swing track was shown
+to have no exploitable edge at the one scale it was ever tested on.
+
+Update 2026-08-03 — this document's central claim was independently confirmed
+the hard way. Three further negative results (ranking by realised PnL, longer
+horizons, behavioural features) were all obtained from the trade tape, which is
+exactly the "shadow" layer this document warned about. L2 capture is now live:
+`src/collector/lighter_book.py`, `deploy/lighter-book.service`, markets
+0/1/2/24, raw JSON + gzip, ~0.089 GB per market per day. Format, volumes and
+the reversibility proof are in `docs/API_DIGEST.md`.
+
+Nothing downstream of capture exists yet, and nothing can be analysed until
+several days have accumulated.
 
 ## Why this exists — the reframe
 

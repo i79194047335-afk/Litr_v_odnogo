@@ -1,0 +1,70 @@
+{
+  "hypothesis_id": "004",
+  "ran_at": "2026-08-02T17:09:19Z",
+  "model": "deepseek-v4-pro",
+  "temperature": 0.0,
+  "max_tokens": 16000,
+  "system_prompt_sha256": "06c43b8494bc1cf241d9ede1a034f59c4631bec66ab32d210859c40b05094fb1",
+  "user_prompt_sha256": "f601b7a88d9e0f599655ea29cb85486a078ecfe0d8732e0dc7a473145ce6d41c",
+  "user_prompt_chars": 115538,
+  "hypothesis_file_sha256": "62e1fadea1f7f03e3dcff80c5d48d7851ba3739c990f10e9c9adc2b8871c0969",
+  "evidence_files": [
+    "docs/MINING.md",
+    "docs/WORKFLOW.md",
+    "docs/API_DIGEST.md",
+    "CLAUDE.md",
+    "LOG.md",
+    "hypotheses/H-002.result.md",
+    "hypotheses/H-003.result.md",
+    "src/analysis/participant_pnl.py",
+    "src/analysis/pnl_persistence.py",
+    "src/analysis/pool_validation.py",
+    "tests/test_pool_validation.py",
+    "tests/test_participant_pnl.py"
+  ],
+  "evidence_source": "H-file",
+  "response_sha256": "d161eade78c6f9a767765d884c51be76f3fd80a9b59dfb87e657e6eaec513ac0",
+  "response_chars": 4442,
+  "finish_reason": "stop",
+  "usage": {
+    "prompt_tokens": 36851,
+    "completion_tokens": 11040,
+    "total_tokens": 47891,
+    "prompt_tokens_details": {
+      "cached_tokens": 36736
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 9930
+    },
+    "prompt_cache_hit_tokens": 36736,
+    "prompt_cache_miss_tokens": 115
+  },
+  "unsealed_at": "2026-08-02T17:09:48Z",
+  "claude_verdict_sha256_at_unseal": "9f7a3d3d57db189f7974b939626e6836961cea52c0e3ac52ebfe7400123fab5f",
+  "claude_verdict_chars_at_unseal": 7194,
+  "rebuttal": {
+    "ran_at": "2026-08-02T17:12:27Z",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.0,
+    "max_tokens": 16000,
+    "system_prompt_sha256": "1bc1caf63113a86460c99eae20774e8e5cc947b5cd20a9e069f47831e995145e",
+    "user_prompt_chars": 127406,
+    "claude_verdict_sha256_at_rebut": "9f7a3d3d57db189f7974b939626e6836961cea52c0e3ac52ebfe7400123fab5f",
+    "response_sha256": "1c2594f9d10910d6f1dbf989b84639dd61d8df41fd76df52807588d866c8c5b4",
+    "response_chars": 4391,
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 39866,
+      "completion_tokens": 5532,
+      "total_tokens": 45398,
+      "prompt_tokens_details": {
+        "cached_tokens": 640
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 4474
+      },
+      "prompt_cache_hit_tokens": 640,
+      "prompt_cache_miss_tokens": 39226
+    }
+  }
+}
