@@ -69,6 +69,8 @@
 | `report_participants` | отчёт по рынку/дню | `src/analysis/report_participants.py` | — (долг) |
 | `role_persistence` | устойчивость ролей между днями | `src/analysis/role_persistence.py` | — (долг) |
 | `build_account_index` | справочник `account_type` из API | `src/analysis/build_account_index.py` | — (долг) |
+| `account_persistence` | значит ли `account_id` то же лицо, что и в день 1 | `src/analysis/account_persistence.py` | `tests/test_account_persistence.py` (11) |
+| `pnl_probe` | сходится ли реконструкция позиции с лентой | `src/analysis/pnl_probe.py` | `tests/test_pnl_probe.py` (14) |
 | *(план)* `apiref` | выдача фрагмента свода по API | — | — |
 | *(план)* `xcheck` | сверка двух выходов по счёту | — | — |
 
