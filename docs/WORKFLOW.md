@@ -75,6 +75,7 @@
 | `pnl_persistence` | воспроизводится ли ранжирование между днями | `src/analysis/pnl_persistence.py` | `tests/test_pnl_persistence.py` (11) |
 | `pool_validation` | сверка PnL с витриной публичных пулов | `src/analysis/pool_validation.py` | `tests/test_pool_validation.py` (18) |
 | `behaviour_profile` | поведенческий профиль счёта + перм-статистика | `src/analysis/behaviour_profile.py` | `tests/test_behaviour_profile.py` (21) |
+| `book_format` | компактный формат книги + реплей и проверка непрерывности | `src/collector/book_format.py` | `tests/test_book_format.py` (11) |
 | *(план)* `apiref` | выдача фрагмента свода по API | — | — |
 | *(план)* `xcheck` | сверка двух выходов по счёту | — | — |
 
@@ -115,7 +116,7 @@
 |---|---|---|
 | Архивариус | работает, cron 06:00 | дельта по докам Lighter |
 | Справочник по API | не начат | свод текущего состояния (см. §5) |
-| Стакан | отложен | `docs/MICROSTRUCTURE_PIPELINE.md` |
+| Стакан | **сбор идёт с 2026-08-03** | `src/collector/lighter_book.py`, план — `docs/MICROSTRUCTURE_PIPELINE.md` |
 | Киты и креветки | не начат | классификация участников |
 | Аномалии | не начат | статистические выбросы |
 | Проверка кода | не начат | ревью перед мержем |
