@@ -1,0 +1,66 @@
+{
+  "hypothesis_id": "006",
+  "ran_at": "2026-08-03T19:00:24Z",
+  "model": "deepseek-v4-pro",
+  "temperature": 0.0,
+  "max_tokens": 16000,
+  "system_prompt_sha256": "06c43b8494bc1cf241d9ede1a034f59c4631bec66ab32d210859c40b05094fb1",
+  "user_prompt_sha256": "6050834f2ea3a50d4f279a50be300b02f0856065c7c4568ca78c7b3ff924e465",
+  "user_prompt_chars": 166807,
+  "hypothesis_file_sha256": "a7f3d4294be4b427e21967b75d1fe90e3f06c09206b7d871570faa649be2c30f",
+  "evidence_files": [
+    "CONTEXT.md",
+    "docs/AUDIT_2026-07-10.md",
+    "docs/BIAS_AUDIT_2026-07-07.md",
+    "docs/ACCEPTANCE_SWEEP_2026-07-10.md",
+    "docs/ROLLING_CALIBRATION_2026-07-10.md",
+    "docs/PASS_FAIL_CRITERION.md",
+    "docs/START_new_dev_chat.md",
+    "docs/START_participant_mining.md"
+  ],
+  "evidence_source": "default",
+  "response_sha256": "a85cbd5407e5e69dd36b25776514ef94912ee0eaffe1ce60ebb85286fdbc7a65",
+  "response_chars": 5537,
+  "finish_reason": "stop",
+  "usage": {
+    "prompt_tokens": 47883,
+    "completion_tokens": 3461,
+    "total_tokens": 51344,
+    "prompt_tokens_details": {
+      "cached_tokens": 47872
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 2104
+    },
+    "prompt_cache_hit_tokens": 47872,
+    "prompt_cache_miss_tokens": 11
+  },
+  "unsealed_at": "2026-08-03T19:02:07Z",
+  "claude_verdict_sha256_at_unseal": "5e401fa3d356dc3c3359e1da98d72a30e639cdd41451be635a8d5de8c6dbfc47",
+  "claude_verdict_chars_at_unseal": 5875,
+  "rebuttal": {
+    "ran_at": "2026-08-03T19:06:13Z",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.0,
+    "max_tokens": 16000,
+    "system_prompt_sha256": "1bc1caf63113a86460c99eae20774e8e5cc947b5cd20a9e069f47831e995145e",
+    "user_prompt_chars": 178451,
+    "claude_verdict_sha256_at_rebut": "5e401fa3d356dc3c3359e1da98d72a30e639cdd41451be635a8d5de8c6dbfc47",
+    "response_sha256": "d0951a6df28346b0cefd5d654f6ed881a0ef013f17984ffcb80481cb71a1a177",
+    "response_chars": 3786,
+    "finish_reason": "stop",
+    "usage": {
+      "prompt_tokens": 50815,
+      "completion_tokens": 5543,
+      "total_tokens": 56358,
+      "prompt_tokens_details": {
+        "cached_tokens": 50688
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 4617
+      },
+      "prompt_cache_hit_tokens": 50688,
+      "prompt_cache_miss_tokens": 127
+    }
+  }
+}
