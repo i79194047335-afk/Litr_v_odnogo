@@ -80,6 +80,7 @@
 | `notify` | доставка сообщения агента человеку | `scripts/notify.sh` | `scripts/test_notify.sh` (15) |
 | `parse_posts` | разбор превью Telegram-канала в JSONL | `telegraf/parse_posts.py` | `tests/test_parse_posts.py` (15) |
 | `telegraf.sh` | новые посты канала API-апдейтов | `telegraf/telegraf.sh` | `telegraf/test_telegraf.sh` (17) |
+| `h005_core_restrict` | различение композиции и устойчивости на паре дней | `scripts/h005_core_restrict.py` | `tests/test_h005_core.py` (6) |
 | *(план)* `apiref` | выдача фрагмента свода по API | — | — |
 | *(план)* `xcheck` | сверка двух выходов по счёту | — | — |
 
