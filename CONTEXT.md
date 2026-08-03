@@ -1598,9 +1598,19 @@ In **both**:
   Authorization head`, `pnl(by=index, value=foreign)` → 400 `account not
   found`. REST backfill of foreign history is CLOSED. Forward-only collection
   from the public tape is the path, and it is running.
-- Whether the Lighter account_index is persistent over time (needed to track
-  one trader across days). Polymarket's 0x wallet is persistent. **Still open,
-  and now the blocking question** — a ranking is meaningless if ids rotate.
+- ~~Whether the Lighter account_index is persistent over time (needed to track
+  one trader across days).~~ **CLOSED 2026-08-02, it is persistent:** all 3376
+  accounts from the first collection day were re-queried and compared against
+  the cached index — 3368 of 3376 identical on `account_type` and `l1_address`,
+  zero identity changes, zero disappearances. The remaining 8 shifted `status`
+  in both directions (accounts closing or opening), not identity. Tool:
+  `src/analysis/account_persistence.py`, 11 tests; detail in `docs/MINING.md`
+  §4.3, including the coverage caveat (verified over weeks, not months).
+  **This paragraph read "still open, and now the blocking question" until
+  2026-08-04.** That stale text was quoted back at us by the H-006 falsifier as
+  grounds to reject a measurement that depends on it — see
+  `hypotheses/H-006.result.md`. Stale docs do not merely mislead readers; they
+  get cited as evidence.
   Weak positive so far: account `27927` was named by the 2026-07-24 probe and
   is still the most active account on 2026-07-28, four days later. One id is
   not evidence; this is the next hypothesis for the consensus protocol.
