@@ -22,6 +22,7 @@ SNAP_DIR="$STATE_DIR/snapshots"
 CHANGELOG="$HERE/knowledge/api_changelog.md"   # для человека
 EVENTS="$HERE/knowledge/events.jsonl"          # для машин: одна строка на изменение
 LOG_FILE="$HERE/logs/run.log"
+NOTIFY="${NOTIFY_CMD:-$HERE/../scripts/notify.sh}"   # канал доставки; переопределяется в тестах
 
 MAX_CHARS=12000                    # потолок на версию страницы в промпте
 DIFF_LINES=40                      # сколько строк диффа класть в событие как доказательство
@@ -268,6 +269,14 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
     else
         summarized=$(( summarized + 1 ))
 
+        # При ответе прозой $parsed пуст, и `jq .highlights` по пустому входу
+        # завершается УСПЕШНО, ничего не напечатав — из-за чего `|| echo '[]'`
+        # не срабатывает, а `--argjson hl ""` роняет jq и событие не пишется.
+        # Проза при этом уже в журнале: выходы расходятся молча. Найдено
+        # 2026-08-03 тестом Телеграфа на том же коде; здесь тот же дефект.
+        highlights=$(printf '%s' "$parsed" | jq -c '.highlights // []' 2>/dev/null)
+        [[ -z "$highlights" ]] && highlights='[]'
+
         # Машиночитаемое событие: одна строка на изменение, чтобы следующие
         # агенты читали это пайпом, а не разбирали прозу. Пишется и когда ответ
         # не разобрался (kind="?") — иначе проза и JSONL расходятся, и потом
@@ -277,7 +286,7 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
             --arg url "$url" --arg title "$title" --arg section "$section" \
             --arg change "$kind" --arg k "$ckind" --arg s "$summary" \
             --argjson br "$breaking" \
-            --argjson hl "$(printf '%s' "$parsed" | jq -c '.highlights // []' 2>/dev/null || echo '[]')" \
+            --argjson hl "$highlights" \
             --arg ev "$evidence" \
             '{v:1, ts:$ts, source:"lighter-apidocs", url:$url, title:$title, section:$section,
                change:$change, kind:$k, breaking:$br, highlights:$hl, summary:$s,
@@ -297,7 +306,25 @@ log INFO "описано моделью $summarized из $CHANGED изменён
 # Сводка по breaking — чтобы главное было видно в cron.log, не открывая журнал.
 if [[ -s "$EVENTS" ]]; then
     today_breaking=$(jq -r --arg d "$TODAY" 'select(.breaking == true and (.ts | startswith($d))) | .title' "$EVENTS" 2>/dev/null | paste -sd', ')
-    [[ -n "$today_breaking" ]] && log WARN "BREAKING CHANGES: $today_breaking"
+    if [[ -n "$today_breaking" ]]; then
+        log WARN "BREAKING CHANGES: $today_breaking"
+        # Агент сам находит человека. Без этого он живёт на сервере и молчит:
+        # запись в файл — не уведомление, её надо пойти и открыть.
+        # Доставка не влияет на прогон (снимки уже записаны), но её провал
+        # обязан быть виден в логе — иначе молчание неотличимо от «всё тихо».
+        if [[ -x "$NOTIFY" ]]; then
+            notify_rc=0
+            printf 'BREAKING в документации Lighter API:\n%s\n\nЖурнал: %s' \
+                "$today_breaking" "$CHANGELOG" | "$NOTIFY" archivarius 2>/dev/null || notify_rc=$?
+            if [[ $notify_rc -eq 0 ]]; then
+                log INFO "уведомление отправлено"
+            else
+                log WARN "уведомление НЕ отправлено (код $notify_rc) — сообщение только в журнале"
+            fi
+        else
+            log WARN "канал доставки недоступен ($NOTIFY) — сообщение только в журнале"
+        fi
+    fi
 fi
 
 log INFO "=== готово ==="
