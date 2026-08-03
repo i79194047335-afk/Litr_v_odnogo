@@ -13,7 +13,13 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$HERE")"
 
-INDEX_URL="https://apidocs.lighter.xyz/llms.txt"
+# Два сайта документации, у каждого свой машиночитаемый индекс. Разделены
+# пробелом, порядок значим только для логов.
+#   apidocs — технический референс: изменения здесь ломают код;
+#   docs    — концептуальный: правила матчинга, ликвидаций, маржи. Ломает не
+#             компиляцию, а понимание — то есть предпосылки стратегии.
+# Переопределяется в тестах через INDEX_URLS.
+INDEX_URLS="${INDEX_URLS:-https://apidocs.lighter.xyz/llms.txt https://docs.lighter.xyz/llms.txt}"
 MODEL="deepseek-v4-flash"          # дешёвый тир: пересказывать, не рассуждать
 API_URL="https://api.deepseek.com/chat/completions"
 
@@ -58,12 +64,21 @@ if [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
     exit 1
 fi
 
-# --- индекс -------------------------------------------------------------
+# --- индексы ------------------------------------------------------------
+# Скачиваем все индексы ДО разбора: если недоступен любой, прогон прерывается и
+# состояние не трогается. Иначе пропавший сайт выглядел бы как «все его страницы
+# исчезли» — и следующий прогон счёл бы их новыми.
 INDEX="$WORK_DIR/llms.txt"
-if ! curl -sS --fail --retry 3 --retry-delay 5 --max-time 30 -o "$INDEX" "$INDEX_URL"; then
-    log ERROR "индекс недоступен — прогон прерван, состояние не тронуто"
-    exit 1
-fi
+: > "$INDEX"
+for iu in $INDEX_URLS; do
+    part="$WORK_DIR/idx_$(printf '%s' "$iu" | sha256sum | cut -c1-12).txt"
+    if ! curl -sS --fail --retry 3 --retry-delay 5 --max-time 30 -o "$part" "$iu"; then
+        log ERROR "индекс недоступен ($iu) — прогон прерван, состояние не тронуто"
+        exit 1
+    fi
+    cat "$part" >> "$INDEX"
+    printf '\n' >> "$INDEX"
+done
 
 # Строки вида: - [Заголовок](https://...md): описание
 # Вытаскиваем "url<TAB>заголовок", секцию берём из ближайшего "## " сверху.
@@ -148,12 +163,31 @@ log INFO "скачано: $ok, не открылось: $failed, без изме
 prepend() {  # дописать блок в начало журнала
     local block="$1" tmp="$WORK_DIR/changelog.new"
     {
+        # Комментарии-маркеры аудита (правки базы знаний) живут ВЫШЕ шапки и
+        # обязаны выжить: они и есть запись о том, что из журнала удалялось.
+        # Забираем всё до первого markdown-заголовка.
+        [[ -f "$CHANGELOG" ]] && awk '/^# /{exit} {print}' "$CHANGELOG"
+
         printf '# Lighter API — журнал изменений документации\n\n'
-        printf 'Ведёт Архивариус автоматически. Источник: <%s>\n' "$INDEX_URL"
+        printf 'Ведёт Архивариус автоматически. Источники: %s\n' \
+            "$(for iu in $INDEX_URLS; do printf '<%s> ' "$iu"; done)"
         printf 'Новые записи сверху.\n\n'
         cat "$block"
-        # старый журнал без его шапки (первые 5 строк)
-        [[ -f "$CHANGELOG" ]] && tail -n +6 "$CHANGELOG"
+
+        # Старый журнал без шапки. Раньше здесь стояло `tail -n +6` — счёт
+        # строк, который ломался о markdown-комментарии над заголовком: в живом
+        # журнале их четыре строки, и следующая же правка снесла бы оба маркера
+        # аудита, оставив вместо них осиротевшую строку про один источник.
+        #
+        # Отрезаем по содержимому, а не по счёту: всё до строки «Новые записи
+        # сверху» включительно — шапка; сразу за ней идёт одна пустая строка,
+        # её тоже глотаем, дальше — записи как есть.
+        if [[ -f "$CHANGELOG" ]]; then
+            awk 'body { print; next }
+                 /^Новые записи сверху/ { hdr = 1; next }
+                 hdr && NF == 0 { body = 1; next }
+                 hdr { body = 1; print }' "$CHANGELOG"
+        fi
     } > "$tmp"
     mv "$tmp" "$CHANGELOG"
 }
@@ -164,6 +198,17 @@ if [[ "$FIRST_RUN" -eq 1 ]]; then
     prepend "$WORK_DIR/block.md"
     log INFO "первый прогон: слепок снят, обращений к модели не было"
     exit 0
+fi
+
+# Недописанный черновик прошлого прогона (прерванного на середине) вливаем в
+# журнал прежде всего остального: события за него уже в JSONL, и до этой правки
+# они оставались там без пары в прозе навсегда.
+PENDING="$STATE_DIR/pending_block.md"
+if [[ -s "$PENDING" ]]; then
+    n=$(grep -c '^### \[' "$PENDING" || true)
+    log WARN "найден черновик прерванного прогона ($n записей) — вливаю в журнал"
+    prepend "$PENDING"
+    rm -f "$PENDING"
 fi
 
 if [[ "$CHANGED" -eq 0 ]]; then
@@ -185,7 +230,15 @@ SYSTEM_PROMPT='Ты — Архивариус, технический ассис�
 - breaking — true, только если изменение сломает существующую интеграцию.
 - highlights — до 5 коротких фактов, каждый одной строкой. Пустой массив, если менять нечего.'
 
-BLOCK="$WORK_DIR/block.md"
+# Черновик прозы держим в state/, а не в WORK_DIR: последний удаляется trap-ом,
+# и прерванный прогон терял его целиком. JSONL при этом дописывается построчно —
+# то есть события уже на диске, а проза исчезала, и выходы расходились.
+#
+# Так и случилось 2026-08-03: прогон убит по таймауту на 27-й из 35 страниц,
+# 27 событий легли в JSONL, в журнал — ни одного, а снимки уже обновились. То
+# есть следующий прогон увидел бы «изменений нет», и эти 27 страниц не попали бы
+# в прозу никогда. Черновик в state/ подхватывается следующим прогоном.
+BLOCK="$STATE_DIR/pending_block.md"
 printf '## %s — изменений: %s\n\n' "$TODAY" "$CHANGED" > "$BLOCK"
 summarized=0
 
@@ -288,7 +341,12 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
             --argjson br "$breaking" \
             --argjson hl "$highlights" \
             --arg ev "$evidence" \
-            '{v:1, ts:$ts, source:"lighter-apidocs", url:$url, title:$title, section:$section,
+            --arg src "$(case "$url" in
+                            https://apidocs.lighter.xyz/*) echo "lighter-apidocs" ;;
+                            https://docs.lighter.xyz/*)    echo "lighter-docs" ;;
+                            *)                             echo "lighter-unknown" ;;
+                         esac)" \
+            '{v:1, ts:$ts, source:$src, url:$url, title:$title, section:$section,
                change:$change, kind:$k, breaking:$br, highlights:$hl, summary:$s,
                evidence:$ev}' \
             >> "$EVENTS"
@@ -301,6 +359,7 @@ while IFS=$'\t' read -r url title section kind oldfile newfile; do
 done < "$CHANGES"
 
 prepend "$BLOCK"
+rm -f "$BLOCK"   # влит в журнал; иначе следующий прогон впишет его повторно
 log INFO "описано моделью $summarized из $CHANGED изменённых страниц ($MODEL)"
 
 # Сводка по breaking — чтобы главное было видно в cron.log, не открывая журнал.

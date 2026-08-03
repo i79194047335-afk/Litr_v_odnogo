@@ -63,7 +63,7 @@
 
 | Тулза | Назначение | Файл | Тест |
 |---|---|---|---|
-| `archivarius.sh` | дельта по докам Lighter | `archivarius/archivarius.sh` | `archivarius/test_archivarius.sh` (15) |
+| `archivarius.sh` | дельта по докам Lighter (2 сайта) | `archivarius/archivarius.sh` | `archivarius/test_archivarius.sh` (25) |
 | `falsify.py` | прогон гипотезы через протокол | `scripts/falsify.py` | `tests/test_falsify.py` |
 | `participant_stats` | разбор ленты по счетам | `src/analysis/participant_stats.py` | `tests/test_participant_stats.py` (15) |
 | `report_participants` | отчёт по рынку/дню | `src/analysis/report_participants.py` | — (долг) |
@@ -79,6 +79,7 @@
 | `collector_health` | не встал ли сбор молча | `scripts/collector_health.py` | `tests/test_collector_health.py` (13) |
 | `notify` | доставка сообщения агента человеку | `scripts/notify.sh` | `scripts/test_notify.sh` (15) |
 | `parse_posts` | разбор превью Telegram-канала в JSONL | `telegraf/parse_posts.py` | `tests/test_parse_posts.py` (15) |
+| `telegraf.sh` | новые посты канала API-апдейтов | `telegraf/telegraf.sh` | `telegraf/test_telegraf.sh` (17) |
 | *(план)* `apiref` | выдача фрагмента свода по API | — | — |
 | *(план)* `xcheck` | сверка двух выходов по счёту | — | — |
 
@@ -117,7 +118,7 @@
 
 | Агент | Статус | Задача |
 |---|---|---|
-| Архивариус | работает, cron 06:00 | дельта по докам Lighter |
+| Архивариус | работает, cron 06:00 | дельта по докам Lighter: `apidocs` + `docs`, 138 страниц |
 | Телеграф | работает, cron 06:30 | посты канала `@lighter_api_updates` |
 | Справочник по API | не начат | свод текущего состояния (см. §5) |
 | Стакан | **сбор идёт с 2026-08-03** | `src/collector/lighter_book.py`, план — `docs/MICROSTRUCTURE_PIPELINE.md` |
