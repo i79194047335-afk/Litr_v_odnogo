@@ -4,8 +4,160 @@
      snapshots used to test the model were recorded as real observations -->
 # Lighter API — журнал изменений документации
 
-Ведёт Архивариус автоматически. Источник: <https://apidocs.lighter.xyz/llms.txt>
+Ведёт Архивариус автоматически. Источники: <https://apidocs.lighter.xyz/llms.txt> <https://docs.lighter.xyz/llms.txt>
 Новые записи сверху.
+
+<!-- Счёт записей: в прозе 132, в events.jsonl 130. Расхождение постоянное и
+     объяснимое: две записи от 30 июля сделаны до появления JSONL-потока
+     (поле добавлено 31 июля). За все периоды, где есть оба выхода, счёт
+     сходится: 103 (31.07) + 27 (03.08). -->
+
+<!-- reconstructed 2026-08-03: этот блок собран из events.jsonl, а не написан
+     агентом по ходу прогона. Прогон был убит по таймауту на 27-й из 35
+     страниц: события успели лечь в JSONL построчно, а проза собиралась в
+     WORK_DIR и исчезла вместе с ним, при уже обновившихся снимках. Дефект
+     закрыт (черновик переехал в state/pending_block.md, есть тест на обрыв),
+     но эти 27 записей восстановлены постфактум из машинного потока.
+     Остальные 8 из 35 страниц не описаны вовсе — снимки ушли вперёд. -->
+## 2026-08-03 — новый источник docs.lighter.xyz: 27 страниц
+
+_Подключён второй сайт документации (концептуальный). Записи ниже
+восстановлены из `events.jsonl` — см. маркер выше._
+
+### [Introduction](https://docs.lighter.xyz/about-lighter/introduction.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница Introduction в разделе Lighter Docs. Она описывает Lighter как децентрализованную торговую платформу с нулевой комиссией (zero-fee), верифицируемым сопоставлением ордеров и ликвидациями, а также производительностью на уровне традиционных бирж. Для разработчика бота важно, что документация доступна в Markdown (добавление `.md` к URL) и есть общий индекс `llms.txt` для навигации. Также приведены актуальные адреса платформы: `https://app.lighter.xyz/` и `https://lighter.exchange/trade/ETH`.
+
+### [Technical Architecture: Lighter Core](https://docs.lighter.xyz/about-lighter/technical-architecture-lighter-core.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации **Technical Architecture: Lighter Core**, описывающая архитектуру Lighter: исполнение с использованием succinct proof (ZK), Ethereum как слой расчётов и хранения состояния, а также механизм escape hatch для гарантированного вывода средств. Разработчику торгового бота важно понимать, что все операции исполняются детерминированно через Sequencer, пользовательские средства находятся на Ethereum в некастодиальных смарт-контрактах, а для критичных операций (вывод, выход из пула, reduce-only IOC) можно отправлять приоритетные запросы напрямую в сеть Ethereum. При необработке запросов Sequencer'ом активируется Escape Hatch, позволяющий пользователям восстановить состояние и вывести активы без участия off-chain компонентов.
+
+### [LIT Utility](https://docs.lighter.xyz/about-lighter/lit-utility.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница **LIT Utility** (https://docs.lighter.xyz/about-lighter/lit-utility.md) о стейкинге LIT и байбэках. Для разработчика важно: LLP теперь доступен только стейкерам LIT, пропорция 1 LIT = 10 USDC депозита в LLP, при unstaking действует lockup 3 дня. Стейкинг даёт фиксированные 6% APR, награды покупаются из адреса `0x5E52363E65C99fefC0E356F0DC6c37b75bf8FC91`; байбэки проводятся ежедневными TWAP за счёт торговых комиссий.
+
+### [Trading Fees](https://docs.lighter.xyz/trading/trading-fees.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница Trading Fees, которая описывает комиссии и типы аккаунтов Lighter: Standard (0 maker/taker, taker latency 300ms), Premium (комиссии зависят от стейка LIT, со скидками на fee и latency) и Plus (0.5 bps, повышенные rate limits). Для разработчика торгового бота важно: Standard Account позволяет торговать бесплатно, но с базовой латентностью; Premium требует стейка LIT для снижения комиссий; Plus включается через `changeAccountTier` и даёт 8000 `sendTx`/min и 120000 read-only запросов/min. Скидки за стейк агрегируются на уровне L1-адреса вместе с субаккаунтами.
+
+### [LIT Fee Credits](https://docs.lighter.xyz/trading/trading-fees/lit-fee-credits.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации **LIT Fee Credits**, описывающая программу, которая позволяет участникам Premium Accounts докупать кредиты LIT вместо полного стейкинга для достижения нужного уровня торговой комиссии и задержки. Для разработчика бота важно, что торговый тир может быть активирован без полного стейкинга, но требует L1-подписи и разового платежа LIT; все платежи распределяются среди стейкеров как ежедневные награды. Это новая страница, поэтому существующие интеграции не ломаются.
+
+### [Unified Trading Accounts](https://docs.lighter.xyz/trading/unified-trading-accounts.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации «Unified Trading Accounts», описывающая два типа счетов: Unified Trading Account (UTA) с единым маржинальным обеспечением на спотовых и перпетуал-балансах в USDC, и Simple Trading Account, где спот и перпетуалы разделены, а кросс-маржа действует только внутри перпетуалов. Для разработчика важно понимать различия при выборе режима: UTA — первый шаг к использованию спотовых активов как залога в перпетуал-маркетах, а Simple Trading Account ограничивает обеспечение settlement assets.
+
+### [Order Types & Matching](https://docs.lighter.xyz/trading/order-types-and-matching.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации «Order Types & Matching», описывающая все типы ордеров Lighter: Market, Limit, Stop-loss/Take-profit, TWAP, Advanced TWAP, Chase Limit, Atomic, а также механику Order Margin, Price Checks и Order Matching. Для разработчика бота важны детали execution options (Post-Only, Reduce-Only), time-in-force (Good 'Til Time, Immediate or Cancel), формулы расчёта TWAP, условия триггеров SL/TP, проверки fat finger и правило price-time priority. Также объясняется, что risk checks после каждого трейда могут авто-отменять ордера, и как рассчитывается доступный order margin.
+
+### [Real World Assets (RWAs)](https://docs.lighter.xyz/trading/real-world-assets-rwas.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации о Real World Assets (RWAs). RWAs торгуются 24/7 и включают commodities, equities и fixed income. Ранее основным провайдером ликвидности был XLP, теперь ликвидностью и ликвидациями управляет LLP. Рынки RWA поддерживают Isolated и Cross Margin, плечо не меняется вне торговых часов, но возможна повышенная волатильность на открытии.
+
+### [RWA Pricing Mechanism](https://docs.lighter.xyz/trading/real-world-assets-rwas/rwa-pricing-mechanism.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации **RWA Pricing Mechanism**, объясняющая, как формируются цены для RWA-рынков. Цена основывается на внешних oracle-источниках (Chainlink, Pyth, Stork) и внутреннем ценообразовании; при устаревании оракулов вес плавно переходит на внутреннюю цену по экспоненциальному закону. Внутренняя цена считается как time-weighted EMA от impact price стакана заказов, с разными постоянными времени для index price (τ=30 мин) и mark price (τ=2 мин), и ограничена коридором относительно последней оракулской цены и плеча рынка. С 2026-07-10 на ряде рынков (SPY, US500, QQQ, US100, XAU, XAG, NVDA, TSLA и др.) ценовые капы отменены, но внутренние цены продолжают валидироваться против других торговых площадок.
+
+### [Futures Contract Price Rolling Mechanism](https://docs.lighter.xyz/trading/real-world-assets-rwas/futures-contract-price-rolling-mechanism.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации, описывающая механизм постепенного перехода цен фьючерсных контрактов для рынков WTI, NATGAS, BRENTOIL, XCU и WHEAT. В течение 5 торговых дней между 5-м и 10-м бизнес-днём каждого месяца цена каждый день сдвигается на 20% от текущего месяца к следующему. Для разработчика бота важно учитывать время ролла (5:30 PM ET для WTI/NATGAS, 7:00 PM ET для BRENTOIL) и окна закрытия базового рынка, а также конкретные расписания роллов на 2026 год.
+
+### [Market Specifications](https://docs.lighter.xyz/trading/real-world-assets-rwas/market-specifications.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Это новая справочная страница документации Lighter API, которая описывает текущие спецификации RWA-рынков (commodities, FX, equities). Для каждого рынка приведены тип, Current Open Interest Cap (M), отслеживаемый базовый актив (Tracked Underlying), используемый Oracle и ссылка на страницу прайс-фида. Разработчику торгового бота важно учитывать эти лимиты open interest и источники цен при выборе рынков и оценке рисков. Параметры могут обновляться Lighter team, поэтому нужно следить за официальными анонсами.
+
+### [Pre-IPO Markets](https://docs.lighter.xyz/trading/real-world-assets-rwas/pre-ipo-markets.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Новая страница описывает Pre-IPO Markets: они устроены как RWA-рынки, но без price caps, только isolated margin, с ликвидационными комиссиями (LLP выступает маркет-мейкером) и стандартным funding. Сеттлмент произойдёт после IPO или цена будет скорректирована после прояснения числа разводнённых акций; любые изменения анонсируются минимум за день. Разработчику бота важно учитывать отсутствие ценовых ограничений и особый режим маржи.
+
+### [US Equity Indices](https://docs.lighter.xyz/trading/real-world-assets-rwas/us-equity-indices.md) — новая страница
+_Раздел: Lighter Docs · тип: api_
+
+Добавлена новая страница документации **US Equity Indices**, описывающая механизм ценообразования для американских фондовых индексов (например, US100): цена формируется на основе фьючерсной цены с корректировкой к спотовой, ролл происходит в пятницу. Для разработчика торгового бота важно, что появился новый эндпоинт `/syntheticSpotInfo`, который отдаёт текущую конфигурацию рынка: базовый фьючерс, провайдера, expiry, bps/day и spot close. Также приведена формула расчёта индекса из цены Pyth, что позволяет самостоятельно воспроизводить расчёт.
+
+### [perpRFQ](https://docs.lighter.xyz/trading/perprfq.md) — новая страница
+_Раздел: Lighter Docs · тип: api_
+
+Добавлена страница документации по perpRFQ — новому типу ордеров для торговли крупными объёмами при ограниченной видимой ликвидности. Трейдер отправляет запрос котировки (RFQ), маркет-мейкеры видят только размер и отвечают ценой в течение 10 секунд; у трейдера есть до 2 минут на исполнение. Адрес должен быть в whitelist. Функция в бета-версии, доступна на многих крипто и RWA рынках.
+
+### [Public Pools](https://docs.lighter.xyz/trading/public-pools.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации **Public Pools** — раздел про публичные пулы, где оператор (пока только whitelisted) управляет объединённым капиталом участников. Торговля ведётся через Sub Account оператора, прибыль распределяется между участниками за вычетом комиссии оператора. Описаны ключевые параметры для интеграции: operator fee, minimum operator share, а также ограничение — isolated positions не поддерживаются. Для депозиторов указано, что они получают pool shares, lockup-периода нет, вывод средств возможен в любой момент.
+
+### [Contract Specifications](https://docs.lighter.xyz/trading/contract-specifications.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации **Contract Specifications**, содержащая таблицу спецификаций перпетуальных фьючерсных контрактов на Lighter Test Network. Для каждого рынка (BTC, ETH, SOL, XRP и др.) указаны Price Step, Amount Step, Leverage, IMR, MMR, CMR. Разработчикам торговых ботов эти данные критичны для расчёта объёмов ордеров, маржи и уровней ликвидации. Дополнительно отмечено, что текущий funding period для всех рынков — 1 час, но для новых развёртываний он может отличаться.
+
+### [Prelaunch Markets](https://docs.lighter.xyz/trading/prelaunch-markets.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена страница документации о prelaunch markets. Для разработчика важно: все prelaunch-рынки работают только в isolated mode, ликвидность обеспечивает новый пул XLP вместо LLP, отсутствует liquidation fee, а закрытие позиций происходит через IoC-ордер или ADL в зависимости от уровня маржи.
+
+### [Liquidations & LLP (Insurance Fund)](https://docs.lighter.xyz/trading/liquidations-and-llp-insurance-fund.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации Lighter API — «Liquidations & LLP (Insurance Fund)». Она описывает три уровня маржинальных требований (initial, maintenance, close-out) и пошаговый процесс ликвидации: healthy → pre-liquidation → partial liquidation → full liquidation → ADL. Разработчику торгового бота важно учитывать, что в pre-liquidation нельзя увеличивать позиции, при partial liquidation биржа отменяет все открытые ордера и отправляет IoC-ордера по zero price на полный объём позиции, а при полной ликвидации позиции забирает LLP/страховой фонд. Также описаны формулы zero price, комиссия ликвидации до 1% в пользу LLP и условия авто-делевереджинга.
+
+### [LLP Strategies](https://docs.lighter.xyz/trading/liquidations-and-llp-insurance-fund/llp-strategies.md) — новая страница
+_Раздел: Lighter Docs · тип: behavior_
+
+Добавлена новая страница документации **LLP Strategies**. В ней объясняется, что пул LLP выступает единым контрагентом и полностью обеспечивает Auto-Deleverage (ADL), а для изоляции рисков залог делится по стратегическим корзинам (buckets), каждая из которых привязана к своим рынкам. Для разработчика важно: стратегии не являются отдельными аккаунтами, но работают как сегрегированные с точки зрения риска, поэтому при полном исчерпании залога ADL затрагивает только конкретную стратегию. Отдельно уточнено, что RWA-перпетуалы теперь облагаются стандартными ликвидационными комиссиями, как и остальные рынки.
+
+### [Multi-Asset Margin](https://docs.lighter.xyz/trading/multi-asset-margin.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации **Multi-Asset Margin**, описывающая возможность использовать не-USDC активы (например, ETH) в качестве маржи для торговли. Для разработчика важно: маржинальные активы учитываются в Total Account Value с дисконтом LTV, ликвидация использует единый health check для перпетуалов и спот-активов, а параметры каждого актива (LTV, LT, LF, ликвидационная комиссия, лимиты) доступны через endpoint `assetDetails` с полем `margin_mode: "enabled"`. На запуске поддерживаются только perpetual futures; USDC spot с не-USDC залогом появится позже. При отсутствии не-USDC активов поведение аккаунта идентично стандартному cross-margin.
+
+### [Collateral Supply Limits](https://docs.lighter.xyz/trading/multi-asset-margin/collateral-supply-limits.md) — новая страница
+_Раздел: Lighter Docs · тип: limits_
+
+Добавлена новая страница документации «Collateral Supply Limits», описывающая лимиты обеспечения в multi-asset margin. Пока только ETH поддерживается как первый не-USDC залог, с глобальным лимитом 2000 ETH. Пользователь может выбирать, какую часть доступного коллатерала направить в маржу по каждому активу. Указано, что в будущем активы и функции будут расширяться.
+
+### [Funding](https://docs.lighter.xyz/trading/funding.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации «Funding» (https://docs.lighter.xyz/trading/funding.md). Она описывает механизм периодических funding-платежей по бессрочным фьючерсам: выплаты происходят каждый час, peer-to-peer, без комиссии биржи. Приводятся формулы расчёта ставки от mark-to-index premium, interest rate и клампов (SmallClamp 0.05%, BigClamp 4%), а также формула платежа для позиции. Для разработчика бота важно, что при premium в пределах ±0.05% ставка равна InterestRate/8 (1 bps за 8 часов), а максимум — 4% за 8 часов.
+
+### [Funding Rate Rebates](https://docs.lighter.xyz/trading/funding/funding-rate-rebates.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации, описывающая программу Funding Rate Rebates для RWA рынков. Программа позволяет получать до 15% rebate на funding payments, комбинируя 6% за Premium Account и до 9% за стейкинг LIT. Для расчета используется min(Funding Rate, Interest Rate Component) × Position Value. Важно: программа будет прекращена 15 мая 2025 в 15:00 UTC, выплаты производятся ежедневно в 00:00 UTC при сумме > $1.
+
+### [PnL And Total Account Value](https://docs.lighter.xyz/trading/pnl-and-total-account-value.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации по расчёту PnL и общей стоимости счёта в Lighter. Описаны формулы unrealized/realized PnL для перпетуалов, пересчёт средней цены входа при увеличении позиции и total account value. Отдельно указано, что средства изолированной позиции (Allocated Margin) учитываются как collateral. Разработчику торгового бота это полезно для самостоятельного воспроизведения расчётов.
+
+### [Fair Price Marking](https://docs.lighter.xyz/trading/fair-price-marking.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница документации **Fair Price Marking**, описывающая расчёт mark price для бессрочных контрактов Lighter. Разработчику торгового бота важно понимать, что mark price формируется как медиана из impact price, price1 и price2, где price1 учитывает индексную цену и ограниченную премию перпетуала через EMA, а price2 — медиану mark price централизованных бирж. Поскольку именно mark price используется при ликвидациях, его формула и оракулы (Chainlink, Stork, Pyth) помогают оценить риск принудительного закрытия позиции.
+
+### [Self-Trade Prevention](https://docs.lighter.xyz/trading/self-trade-prevention.md) — новая страница ⚠️ **BREAKING**
+_Раздел: Lighter Docs · тип: behavior_
+
+Добавлена новая страница документации Self-Trade Prevention. Сейчас Lighter предотвращает самоторговлю: если пересекаются ордера одного аккаунта, resting order (maker) отменяется, а не исполняется. С 31 мая 2026, 08:00 ET (timestamp: 1780228800) поведение по умолчанию изменится с "reduce both" на "cancel maker": resting order будет отменён полностью, а incoming taker продолжит заполняться по книге. Явно указанные режимы self-trade behavior (cancel maker, cancel taker, cancel both, reduce both) останутся доступны как атрибуты ордера, изменение затрагивает только ордера без явного указания.
+
+### [API](https://docs.lighter.xyz/trading/api.md) — новая страница
+_Раздел: Lighter Docs · тип: docs_
+
+Добавлена новая страница `API` в разделе Lighter Docs. Она содержит общие сведения о работе с Lighter: ссылки на полную документацию (`https://apidocs.lighter.xyz/docs/get-started`) и Telegram-канал обновлений, правила использования API-ключей (до 256 на аккаунт или суб-аккаунт) и описание модели аккаунтов на основе Ethereum-кошелька, включая создание суб-аккаунтов.
 
 ## 2026-07-31 — изменений: 103
 
