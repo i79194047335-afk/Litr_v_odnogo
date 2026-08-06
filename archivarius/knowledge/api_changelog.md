@@ -4,8 +4,15 @@
      snapshots used to test the model were recorded as real observations -->
 # Lighter API — журнал изменений документации
 
-Ведёт Архивариус автоматически. Источники: <https://apidocs.lighter.xyz/llms.txt> <https://docs.lighter.xyz/llms.txt>
+Ведёт Архивариус автоматически. Источники: <https://apidocs.lighter.xyz/llms.txt> <https://docs.lighter.xyz/llms.txt> 
 Новые записи сверху.
+
+## 2026-08-06 — изменений: 1
+
+### [Futures Contract Price Rolling Mechanism](https://docs.lighter.xyz/trading/real-world-assets-rwas/futures-contract-price-rolling-mechanism.md) — изменена
+_Раздел: Lighter Docs · тип: docs_
+
+Документация обновлена: изменён пример расписания роллирования фьючерсных контрактов с июльского окна (2026-07-08 — 2026-07-14) на августовское (2026-08-07 — 2026-08-13, 5:30 PM ET). В таблицу Roll Schedules для WTI, NATGAS, WHEAT, COPPER добавлен отсутствовавший ранее сентябрьский период роллирования 2026-09-08 5:30 PM — 2026-09-14 5:30 PM ET; значения контрактов для сентября: WTI V6 to X6, NATGAS V26 to X26, WHEAT Z26, COPPER Z6. Расписание BRENTOIL и общие правила (20% в день, время 5:30/7:00 PM ET) не изменились. API, параметры, поля и лимиты не затрагивались.
 
 <!-- Счёт записей: в прозе 132, в events.jsonl 130. Расхождение постоянное и
      объяснимое: две записи от 30 июля сделаны до появления JSONL-потока
